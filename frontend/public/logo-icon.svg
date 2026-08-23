@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&amp;family=Outfit:wght@700&amp;display=swap');
+      
+      .pi-icon {
+        font-family: 'Times New Roman', 'Cambria Math', 'Cambria', 'Georgia', 'Lora', serif;
+        font-style: italic;
+        font-weight: 700;
+        fill: #19529b;
+      }
+      
+      .by-icon {
+        font-family: 'Dancing Script', 'Brush Script MT', cursive;
+        font-style: italic;
+        font-weight: 700;
+        fill: #f5a623;
+      }
+      
+      .num-icon {
+        font-family: 'Outfit', 'Arial Rounded MT Bold', system-ui, sans-serif;
+        font-weight: 700;
+        fill: #ffffff;
+      }
+    </style>
+  </defs>
+
+  <rect width="120" height="120" rx="24" fill="#ffffff" />
+  
+  <g transform="translate(6, 12)">
+    <text x="24" y="68" font-size="58" text-anchor="middle" class="pi-icon">π</text>
+    <text x="50" y="66" font-size="30" class="by-icon">by</text>
+    <rect x="74" y="24" width="38" height="38" rx="10" fill="#249cdb" />
+    <text x="93" y="52" font-size="28" text-anchor="middle" class="num-icon">3</text>
+  </g>
+</svg>

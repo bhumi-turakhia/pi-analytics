@@ -1,0 +1,6 @@
+{
+  "name": "Pi-Analytics",
+  "description": "Enterprise Data Discovery and Analytics Platform with Snowflake connectivity, schema discovery, data cataloging, and explorer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
