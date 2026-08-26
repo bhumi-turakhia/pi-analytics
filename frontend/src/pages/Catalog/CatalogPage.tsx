@@ -48,12 +48,7 @@ export const CatalogPage: React.FC<{
   const [selectedTab, setSelectedTab] = useState<'overview' | 'columns' | 'sample' | 'erd' | 'lineage' | 'ddl'>('overview');
   const [sampleRows, setSampleRows] = useState<Record<string, any>[]>([]);
   const [treeSearch, setTreeSearch] = useState('');
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    'RETAIL_ANALYTICS': true,
-    'RETAIL_ANALYTICS.SALES': true,
-    'RETAIL_ANALYTICS.CUSTOMERS': true,
-    'CUSTOMER_DATA_HUB': false,
-  });
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [copiedDdl, setCopiedDdl] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeProfileColumn, setActiveProfileColumn] = useState<CatalogColumn | null>(null);
@@ -68,7 +63,18 @@ export const CatalogPage: React.FC<{
     try {
       const data = await catalogApi.getHierarchy();
       setHierarchy(data);
-      const tbl = await catalogApi.getTableById(initialTableId || 'tbl_order_fact');
+
+      const defaultExpanded: Record<string, boolean> = {};
+      data.forEach((db) => {
+        defaultExpanded[db.name] = true;
+        db.schemas.forEach((sch) => {
+          defaultExpanded[`${db.name}.${sch.name}`] = true;
+        });
+      });
+      setExpandedNodes((prev) => ({ ...defaultExpanded, ...prev }));
+
+      const firstTableId = data[0]?.schemas[0]?.tables[0]?.id;
+      const tbl = await catalogApi.getTableById(initialTableId || firstTableId || '');
       setSelectedTable(tbl);
       if (tbl) {
         const samples = await catalogApi.getSampleData(tbl.id, 50);
@@ -85,7 +91,7 @@ export const CatalogPage: React.FC<{
     if (tbl) {
       const samples = await catalogApi.getSampleData(tbl.id, 50);
       setSampleRows(samples);
-      showToast('info', 'Table Loaded', `${tbl.name} metadata refreshed from Redis cache.`);
+      showToast('info', 'Table Loaded', `${tbl.name} metadata refreshed from database.`);
     }
   };
 

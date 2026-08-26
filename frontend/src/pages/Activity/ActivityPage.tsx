@@ -156,45 +156,53 @@ export const ActivityPage: React.FC<{ onNavigate: (page: NavigationPage) => void
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100 text-stone-800">
-              {filteredLogs.map((log) => (
-                <tr
-                  key={log.id}
-                  onClick={() => setSelectedLog(log)}
-                  className="hover:bg-stone-50/70 cursor-pointer transition-colors"
-                >
-                  <td className="py-3 px-4 font-mono-code text-[11px] text-stone-500 whitespace-nowrap">
-                    {log.timestamp}
-                  </td>
-                  <td className="py-3 px-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-full bg-stone-900 text-white text-[10px] font-semibold flex items-center justify-center shrink-0">
-                        {log.user.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-stone-900 leading-tight">{log.user.name}</div>
-                        <div className="text-[10px] text-stone-400 font-mono-code">{log.user.role}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-3 font-medium text-stone-900">
-                    {log.action}
-                  </td>
-                  <td className="py-3 px-3 font-mono-code text-[11px] text-stone-700">
-                    {log.resource}
-                  </td>
-                  <td className="py-3 px-3">
-                    {getStatusBadge(log.status)}
-                  </td>
-                  <td className="py-3 px-3 font-mono-code text-[11px] text-stone-500">
-                    {log.ipAddress}
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    <Button size="sm" variant="ghost">
-                      Inspect
-                    </Button>
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-stone-400">
+                    {loading ? 'Loading pipeline activity logs...' : 'No activity or pipeline run logs found.'}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredLogs.map((log) => (
+                  <tr
+                    key={log.id}
+                    onClick={() => setSelectedLog(log)}
+                    className="hover:bg-stone-50/70 cursor-pointer transition-colors"
+                  >
+                    <td className="py-3 px-4 font-mono-code text-[11px] text-stone-500 whitespace-nowrap">
+                      {log.timestamp}
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-stone-900 text-white text-[10px] font-semibold flex items-center justify-center shrink-0">
+                          {log.user.name.charAt(0)}
+                        </div>
+                        <div>
+                          <div className="font-semibold text-stone-900 leading-tight">{log.user.name}</div>
+                          <div className="text-[10px] text-stone-400 font-mono-code">{log.user.role}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 font-medium text-stone-900">
+                      {log.action}
+                    </td>
+                    <td className="py-3 px-3 font-mono-code text-[11px] text-stone-700">
+                      {log.resource}
+                    </td>
+                    <td className="py-3 px-3">
+                      {getStatusBadge(log.status)}
+                    </td>
+                    <td className="py-3 px-3 font-mono-code text-[11px] text-stone-500">
+                      {log.ipAddress}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Button size="sm" variant="ghost">
+                        Inspect
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

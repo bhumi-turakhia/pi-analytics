@@ -55,9 +55,12 @@ export const OverviewPage: React.FC<{ onNavigate: (page: NavigationPage, context
   const handleSyncSource = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setSyncingId(id);
-    await dataSourceApi.syncNow(id);
-    await loadData();
-    setSyncingId(null);
+    try {
+      await dataSourceApi.syncNow(id);
+      await loadData();
+    } finally {
+      setSyncingId(null);
+    }
   };
 
   return (
@@ -391,30 +394,36 @@ export const OverviewPage: React.FC<{ onNavigate: (page: NavigationPage, context
             </div>
 
             <div className="divide-y divide-stone-100 max-h-[380px] overflow-y-auto">
-              {activities.map((act) => (
-                <div key={act.id} className="p-3.5 hover:bg-stone-50/60 transition-colors">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-full bg-stone-100 border border-stone-200 text-stone-700 text-[10px] font-bold flex items-center justify-center shrink-0">
-                        {act.user.name.charAt(0)}
+              {activities.length === 0 ? (
+                <div className="p-6 text-center text-xs text-stone-400">
+                  {loading ? 'Loading live activity...' : 'No recent activity recorded.'}
+                </div>
+              ) : (
+                activities.map((act) => (
+                  <div key={act.id} className="p-3.5 hover:bg-stone-50/60 transition-colors">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-stone-900 text-white text-[10px] font-semibold flex items-center justify-center shrink-0">
+                          {act.user.name.charAt(0)}
+                        </div>
+                        <span className="text-xs font-semibold text-stone-900 truncate">
+                          {act.user.name}
+                        </span>
                       </div>
-                      <span className="text-xs font-semibold text-stone-900 truncate">
-                        {act.user.name}
+                      <span className="text-[10px] text-stone-400 font-mono-code shrink-0">
+                        {act.timestamp}
                       </span>
                     </div>
-                    <span className="text-[10px] text-stone-400 font-mono-code shrink-0">
-                      {act.timestamp}
-                    </span>
-                  </div>
 
-                  <div className="mt-1 text-xs text-stone-800 font-medium">
-                    {act.action}
+                    <div className="mt-1 text-xs text-stone-800 font-medium">
+                      {act.action}
+                    </div>
+                    <div className="text-[11px] text-stone-500 font-mono-code truncate mt-0.5">
+                      {act.resource}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-stone-500 font-mono-code truncate mt-0.5">
-                    {act.resource}
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
 

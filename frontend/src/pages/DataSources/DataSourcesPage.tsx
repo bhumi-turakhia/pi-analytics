@@ -55,10 +55,15 @@ export const DataSourcesPage: React.FC<DataSourcesPageProps> = ({
   const handleSyncNow = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setSyncingId(id);
-    await dataSourceApi.syncNow(id);
-    await loadSources();
-    setSyncingId(null);
-    showToast('success', 'Source Synchronized', 'Information schema and micro-partitions cached in Redis.');
+    try {
+      await dataSourceApi.syncNow(id);
+      await loadSources();
+      showToast('success', 'Source Synchronized', 'Pipeline sync run completed successfully.');
+    } catch (error: any) {
+      showToast('error', 'Sync Failed', error?.message || 'Failed to sync data source.');
+    } finally {
+      setSyncingId(null);
+    }
   };
 
   const handleSourceCreated = (newSource: DataSource) => {

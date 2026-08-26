@@ -94,6 +94,15 @@ export interface ActivityLog {
   ipAddress: string;
 }
 
+export interface PipelineRun {
+  id: number;
+  sourceId: number;
+  status: string;
+  startedAt: string;
+  completedAt: string;
+  rowsProcessed: number;
+}
+
 export interface OverviewKPIs {
   connectedSources: number;
   healthyConnections: number;
