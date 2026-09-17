@@ -1,10 +1,24 @@
-import { CatalogDatabase, CatalogTable, CatalogSchema } from '../../types';
+import { CatalogDatabase, CatalogTable, CatalogSchema, CatalogColumn } from '../../types';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+
+/**
+ * Column record returned by backend:
+ * GET /api/datasets/ or GET /api/datasets/{id}
+ */
+export interface BackendCatalogColumn {
+  id?: number;
+  dataset_id?: number;
+  name: string;
+  data_type: string;
+  is_nullable: boolean;
+  ordinal_position: number;
+  comment?: string | null;
+}
 
 /**
  * Actual dataset record returned by:
- * GET /api/datasets/
+ * GET /api/datasets/ and GET /api/datasets/{id}
  */
 export interface BackendDataset {
   id: number;
@@ -12,14 +26,45 @@ export interface BackendDataset {
   database_name: string;
   schema_name: string;
   table_name: string;
+  table_type?: string;
+  row_count?: number;
+  size_bytes?: number;
   created_at: string;
+  updated_at?: string;
+  columns?: BackendCatalogColumn[];
+}
+
+export interface MetadataSyncPayload {
+  account_identifier?: string;
+  username?: string;
+  password?: string;
+  warehouse?: string;
+  database?: string;
+  role?: string;
+}
+
+export interface MetadataSyncResponse {
+  success: boolean;
+  source_id: number;
+  source_type: string;
+  databases_discovered: number;
+  schemas_discovered: number;
+  tables_discovered: number;
+  columns_discovered: number;
+  message: string;
+  error?: string;
+}
+
+export interface QueryResultColumn {
+  name: string;
+  data_type: string;
 }
 
 export interface QueryExecutionRequest {
-  sourceId: string;
-  database: string;
-  schema: string;
-  table: string;
+  sourceId: string | number;
+  database?: string;
+  schema?: string;
+  table?: string;
   sqlQuery?: string;
   selectedColumns?: string[];
   filterCondition?: string;
@@ -27,27 +72,80 @@ export interface QueryExecutionRequest {
   sortDirection?: 'ASC' | 'DESC';
   limit?: number;
   offset?: number;
+  // Ephemeral Snowflake connection credentials (in-memory only, never persisted)
+  accountIdentifier?: string;
+  username?: string;
+  password?: string;
+  warehouse?: string;
+  role?: string;
 }
 
 export interface QueryExecutionResponse {
   columns: string[];
+  columnDetails?: QueryResultColumn[];
   rows: Record<string, any>[];
   totalCount: number;
   executionTimeMs: number;
   bytesScanned: string;
   cachedFromRedis: boolean;
   snowflakeQueryId: string;
+  error?: string;
+}
+
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+function generateDdl(
+  tableName: string,
+  dbName: string,
+  schemaName: string,
+  tableType?: string,
+  columns?: BackendCatalogColumn[]
+): string {
+  const type = tableType || 'TABLE';
+  if (!columns || columns.length === 0) {
+    return `CREATE OR REPLACE ${type} ${dbName}.${schemaName}.${tableName} (\n  -- No columns recorded in catalog\n);`;
+  }
+  const colDefs = columns.map((c) => {
+    let def = `  ${c.name} ${c.data_type}`;
+    if (!c.is_nullable) def += ' NOT NULL';
+    if (c.comment) def += ` COMMENT '${c.comment.replace(/'/g, "\\'")}'`;
+    return def;
+  });
+  return `CREATE OR REPLACE ${type} ${dbName}.${schemaName}.${tableName} (\n${colDefs.join(',\n')}\n);`;
 }
 
 /**
  * Maps a single backend dataset row into the full CatalogTable structure
- * used by the UI components.
+ * used by the UI components. Uses actual column metadata from PostgreSQL.
  */
 function mapBackendDatasetToTable(ds: BackendDataset): CatalogTable {
   const tableId = String(ds.id);
   const dbName = ds.database_name || 'SNOWFLAKE';
   const schemaName = ds.schema_name || 'PUBLIC';
   const tableName = ds.table_name || 'ANALYTICS';
+  const tableType = ds.table_type || 'TABLE';
+
+  const mappedColumns: CatalogColumn[] = (ds.columns || []).map((col) => {
+    const isIdCol = col.name.toUpperCase() === 'ID' || col.ordinal_position === 1;
+    const isFkCol = col.name.toUpperCase().endsWith('_ID') && !isIdCol;
+
+    return {
+      name: col.name,
+      type: col.data_type,
+      nullable: col.is_nullable,
+      isPrimaryKey: isIdCol,
+      isForeignKey: isFkCol,
+      foreignKeyTarget: isFkCol ? `${col.name.slice(0, -3).toUpperCase()}S.ID` : undefined,
+      description: col.comment || `${col.name} (${col.data_type})`,
+      sampleValues: [],
+    };
+  });
 
   return {
     id: tableId,
@@ -56,79 +154,16 @@ function mapBackendDatasetToTable(ds: BackendDataset): CatalogTable {
     schema: schemaName,
     sourceId: String(ds.source_id),
     sourceName: 'Snowflake Analytics',
-    description: `Dataset ${tableName} in ${dbName}.${schemaName} (Source #${ds.source_id})`,
+    description: `${tableType} ${tableName} in ${dbName}.${schemaName} (Source #${ds.source_id})`,
     owner: 'DATA_PLATFORM_TEAM',
-    rowCount: 0,
-    sizeBytes: 0,
-    sizeFormatted: 'Live Table',
-    lastModifiedAt: ds.created_at,
-    lastSyncedAt: ds.created_at,
-    tags: ['postgresql-metadata', 'production'],
-    columns: [
-      {
-        name: 'ID',
-        type: 'INTEGER',
-        nullable: false,
-        isPrimaryKey: true,
-        description: 'Primary identifier in PostgreSQL datasets table',
-        sampleValues: [ds.id],
-        distinctCount: 1,
-        nullPercentage: 0,
-      },
-      {
-        name: 'SOURCE_ID',
-        type: 'INTEGER',
-        nullable: false,
-        isPrimaryKey: false,
-        isForeignKey: true,
-        foreignKeyTarget: 'DATA_SOURCES.ID',
-        description: 'Foreign key referencing data_sources table',
-        sampleValues: [ds.source_id],
-        distinctCount: 1,
-        nullPercentage: 0,
-      },
-      {
-        name: 'DATABASE_NAME',
-        type: 'VARCHAR(255)',
-        nullable: true,
-        isPrimaryKey: false,
-        description: 'Target database name in Snowflake / Warehouse',
-        sampleValues: [dbName],
-        distinctCount: 1,
-        nullPercentage: 0,
-      },
-      {
-        name: 'SCHEMA_NAME',
-        type: 'VARCHAR(255)',
-        nullable: true,
-        isPrimaryKey: false,
-        description: 'Target schema name in Snowflake / Warehouse',
-        sampleValues: [schemaName],
-        distinctCount: 1,
-        nullPercentage: 0,
-      },
-      {
-        name: 'TABLE_NAME',
-        type: 'VARCHAR(255)',
-        nullable: true,
-        isPrimaryKey: false,
-        description: 'Target table name in Snowflake / Warehouse',
-        sampleValues: [tableName],
-        distinctCount: 1,
-        nullPercentage: 0,
-      },
-      {
-        name: 'CREATED_AT',
-        type: 'TIMESTAMP',
-        nullable: true,
-        isPrimaryKey: false,
-        description: 'Record creation timestamp',
-        sampleValues: [ds.created_at],
-        distinctCount: 1,
-        nullPercentage: 0,
-      },
-    ],
-    ddl: `CREATE TABLE ${dbName}.${schemaName}.${tableName} (\n  id INTEGER PRIMARY KEY,\n  source_id INTEGER REFERENCES data_sources(id),\n  database_name VARCHAR(255),\n  schema_name VARCHAR(255),\n  table_name VARCHAR(255),\n  created_at TIMESTAMP\n);`,
+    rowCount: ds.row_count || 0,
+    sizeBytes: ds.size_bytes || 0,
+    sizeFormatted: formatBytes(ds.size_bytes),
+    lastModifiedAt: ds.updated_at || ds.created_at,
+    lastSyncedAt: ds.updated_at || ds.created_at,
+    tags: [tableType, 'snowflake', schemaName.toLowerCase()],
+    columns: mappedColumns,
+    ddl: generateDdl(tableName, dbName, schemaName, tableType, ds.columns),
     downstreamDashboards: ['Pi-Analytics Platform'],
   };
 }
@@ -194,11 +229,12 @@ function buildHierarchyFromDatasets(datasets: BackendDataset[]): CatalogDatabase
 export const catalogApi = {
   /**
    * Fetch all datasets from the FastAPI backend.
-   * GET http://127.0.0.1:8000/api/datasets/
+   * GET /api/datasets/
    */
-  async getAll(): Promise<BackendDataset[]> {
+  async getAll(sourceId?: number): Promise<BackendDataset[]> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/datasets/`);
+      const url = sourceId ? `${API_BASE_URL}/api/datasets/?source_id=${sourceId}` : `${API_BASE_URL}/api/datasets/`;
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch datasets: HTTP ${response.status}`);
       }
@@ -214,10 +250,48 @@ export const catalogApi = {
   },
 
   /**
+   * Fetch single dataset by ID from backend.
+   * GET /api/datasets/{id}
+   */
+  async getDatasetById(id: number | string): Promise<BackendDataset | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/datasets/${id}`);
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new Error(`Failed to fetch dataset #${id}: HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error(`Failed to get dataset ${id}:`, error);
+      return null;
+    }
+  },
+
+  /**
+   * Synchronize metadata for a data source.
+   * POST /api/sources/{source_id}/metadata/sync
+   */
+  async syncMetadata(
+    sourceId: number | string,
+    payload?: MetadataSyncPayload
+  ): Promise<MetadataSyncResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/sources/${sourceId}/metadata/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload ? JSON.stringify(payload) : JSON.stringify({}),
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.detail || `Failed to sync metadata: HTTP ${response.status}`);
+    }
+    return await response.json();
+  },
+
+  /**
    * Get the catalog hierarchy constructed from real backend datasets.
    */
-  async getHierarchy(): Promise<CatalogDatabase[]> {
-    const datasets = await this.getAll();
+  async getHierarchy(sourceId?: number): Promise<CatalogDatabase[]> {
+    const datasets = await this.getAll(sourceId);
     if (datasets.length === 0) {
       return [];
     }
@@ -229,6 +303,15 @@ export const catalogApi = {
    */
   async getTableById(tableId: string): Promise<CatalogTable | null> {
     try {
+      // 1. If numeric ID, attempt direct fetch from GET /api/datasets/{id}
+      if (/^\d+$/.test(tableId)) {
+        const directDs = await this.getDatasetById(tableId);
+        if (directDs) {
+          return mapBackendDatasetToTable(directDs);
+        }
+      }
+
+      // 2. Fall back to finding in all datasets by name or ID
       const datasets = await this.getAll();
       const match = datasets.find(
         (ds) =>
@@ -279,50 +362,59 @@ export const catalogApi = {
   },
 
   /**
-   * Simulates execution of an explorer query.
+   * Execute real read-only analytics query against the backend query execution API.
+   * POST /api/query/execute
    */
   async executeQuery(req: QueryExecutionRequest): Promise<QueryExecutionResponse> {
-    try {
-      const datasets = await this.getAll();
-      const match = datasets.find(
-        (ds) => ds.table_name.toLowerCase() === req.table.toLowerCase()
-      ) || datasets[0];
+    const numericSourceId =
+      typeof req.sourceId === 'string' && /^\d+$/.test(req.sourceId)
+        ? parseInt(req.sourceId, 10)
+        : typeof req.sourceId === 'number'
+        ? req.sourceId
+        : 1;
 
-      const rows = match
-        ? [
-            {
-              ID: match.id,
-              SOURCE_ID: match.source_id,
-              DATABASE_NAME: match.database_name,
-              SCHEMA_NAME: match.schema_name,
-              TABLE_NAME: match.table_name,
-              CREATED_AT: match.created_at,
-            },
-          ]
-        : [];
+    const payload = {
+      source_id: numericSourceId,
+      database: req.database || undefined,
+      schema: req.schema || undefined,
+      table: req.table || undefined,
+      sql_query: req.sqlQuery || undefined,
+      limit: req.limit || 100,
+      account_identifier: req.accountIdentifier || undefined,
+      username: req.username || undefined,
+      password: req.password || undefined,
+      warehouse: req.warehouse || undefined,
+      role: req.role || undefined,
+    };
 
-      const cols = rows.length > 0 ? Object.keys(rows[0]) : ['ID', 'SOURCE_ID', 'DATABASE_NAME', 'SCHEMA_NAME', 'TABLE_NAME', 'CREATED_AT'];
+    const response = await fetch(`${API_BASE_URL}/api/query/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
 
-      return {
-        columns: cols,
-        rows,
-        totalCount: rows.length,
-        executionTimeMs: 45,
-        bytesScanned: 'PostgreSQL Datasets Table',
-        cachedFromRedis: false,
-        snowflakeQueryId: `pg-ds-${match ? match.id : 0}`,
-      };
-    } catch {
-      return {
-        columns: ['ID', 'SOURCE_ID', 'DATABASE_NAME', 'SCHEMA_NAME', 'TABLE_NAME', 'CREATED_AT'],
-        rows: [],
-        totalCount: 0,
-        executionTimeMs: 0,
-        bytesScanned: '0 B',
-        cachedFromRedis: false,
-        snowflakeQueryId: 'pg-ds-err',
-      };
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.detail || `Query execution failed: HTTP ${response.status}`);
     }
+
+    const data = await response.json();
+    const rawCols = data.columns || [];
+    const colNames = rawCols.map((c: any) => (typeof c === 'string' ? c : c.name));
+
+    return {
+      columns: colNames,
+      columnDetails: rawCols.map((c: any) => ({
+        name: typeof c === 'string' ? c : c.name,
+        data_type: typeof c === 'object' && c.data_type ? c.data_type : 'VARCHAR',
+      })),
+      rows: data.rows || [],
+      totalCount: data.row_count ?? (data.rows ? data.rows.length : 0),
+      executionTimeMs: data.execution_time_ms ?? 0,
+      bytesScanned: 'Snowflake Native Engine',
+      cachedFromRedis: false,
+      snowflakeQueryId: data.query_id || 'sf-live-query',
+    };
   },
 
   /**

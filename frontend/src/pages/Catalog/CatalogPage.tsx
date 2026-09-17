@@ -26,6 +26,7 @@ import {
   GitBranch,
   ShieldCheck,
   Play,
+  AlertCircle,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -51,6 +52,8 @@ export const CatalogPage: React.FC<{
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [copiedDdl, setCopiedDdl] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeProfileColumn, setActiveProfileColumn] = useState<CatalogColumn | null>(null);
   const [isRunningQualityChecks, setIsRunningQualityChecks] = useState(false);
 
@@ -58,11 +61,23 @@ export const CatalogPage: React.FC<{
     loadHierarchy();
   }, []);
 
-  const loadHierarchy = async () => {
-    setLoading(true);
+  const loadHierarchy = async (isRefresh = false) => {
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setLoadError(null);
+
     try {
       const data = await catalogApi.getHierarchy();
       setHierarchy(data);
+
+      if (data.length === 0) {
+        setSelectedTable(null);
+        setSampleRows([]);
+        return;
+      }
 
       const defaultExpanded: Record<string, boolean> = {};
       data.forEach((db) => {
@@ -74,14 +89,23 @@ export const CatalogPage: React.FC<{
       setExpandedNodes((prev) => ({ ...defaultExpanded, ...prev }));
 
       const firstTableId = data[0]?.schemas[0]?.tables[0]?.id;
-      const tbl = await catalogApi.getTableById(initialTableId || firstTableId || '');
+      const targetTableId = initialTableId || (selectedTable?.id && data.some(db => db.schemas.some(s => s.tables.some(t => t.id === selectedTable.id))) ? selectedTable.id : firstTableId);
+      const tbl = await catalogApi.getTableById(targetTableId || '');
       setSelectedTable(tbl);
       if (tbl) {
         const samples = await catalogApi.getSampleData(tbl.id, 50);
         setSampleRows(samples);
       }
+      if (isRefresh) {
+        showToast('success', 'Catalog Refreshed', 'Successfully reloaded metadata from PostgreSQL.');
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to load catalog metadata from backend.';
+      setLoadError(msg);
+      showToast('error', 'Catalog Load Failed', msg);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -115,6 +139,17 @@ export const CatalogPage: React.FC<{
   };
 
   const columnTableDefs = [
+    {
+      key: 'ordinal',
+      header: '#',
+      align: 'center' as const,
+      sortable: false,
+      render: (_: any, index?: number) => (
+        <span className="font-mono-code text-[11px] text-stone-400 font-semibold">
+          {(index ?? 0) + 1}
+        </span>
+      ),
+    },
     {
       key: 'name',
       header: 'Column Name',
@@ -168,7 +203,7 @@ export const CatalogPage: React.FC<{
     },
     {
       key: 'description',
-      header: 'Description',
+      header: 'Description / Comment',
       render: (row: CatalogColumn) => (
         <span className="text-xs text-stone-600 leading-snug">{row.description || '—'}</span>
       ),
@@ -204,6 +239,16 @@ export const CatalogPage: React.FC<{
           <Button
             variant="outline"
             size="sm"
+            isLoading={isRefreshing}
+            onClick={() => loadHierarchy(true)}
+            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />}
+            title="Reload catalog metadata from backend"
+          >
+            Refresh
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             isLoading={isRunningQualityChecks}
             onClick={handleRunQualityTests}
             leftIcon={<ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />}
@@ -213,7 +258,19 @@ export const CatalogPage: React.FC<{
           <Button
             variant="primary"
             size="sm"
-            onClick={() => onNavigate('explorer')}
+            onClick={() =>
+              onNavigate(
+                'explorer',
+                selectedTable
+                  ? {
+                      sourceId: selectedTable.sourceId,
+                      database: selectedTable.database,
+                      schema: selectedTable.schema,
+                      table: selectedTable.name,
+                    }
+                  : undefined
+              )
+            }
             leftIcon={<Terminal className="w-3.5 h-3.5" />}
           >
             Open in Explorer
@@ -252,123 +309,194 @@ export const CatalogPage: React.FC<{
 
             {/* Tree Node List */}
             <div className="p-2 max-h-[640px] overflow-y-auto space-y-1 text-xs">
-              {hierarchy.map((db) => {
-                const dbExpanded = expandedNodes[db.name] ?? false;
-                const dbKey = db.name;
+              {loading && !isRefreshing ? (
+                <div className="py-8 text-center text-stone-400 space-y-2">
+                  <RefreshCw className="w-5 h-5 animate-spin mx-auto text-stone-400" />
+                  <p className="text-[11px] font-mono-code">Loading catalog tree...</p>
+                </div>
+              ) : loadError ? (
+                <div className="p-3 text-center space-y-2">
+                  <AlertCircle className="w-5 h-5 mx-auto text-rose-500" />
+                  <p className="text-[11px] text-rose-600 font-medium">{loadError}</p>
+                  <Button size="xs" variant="outline" onClick={() => loadHierarchy(false)}>
+                    Retry
+                  </Button>
+                </div>
+              ) : hierarchy.length === 0 ? (
+                <div className="py-8 px-3 text-center space-y-2 text-stone-400">
+                  <Database className="w-6 h-6 mx-auto text-stone-300" />
+                  <p className="text-xs font-semibold text-stone-700">No Metadata Synchronized</p>
+                  <p className="text-[11px] text-stone-500">Run "Sync Metadata" on a Snowflake source to populate the catalog.</p>
+                </div>
+              ) : (
+                hierarchy.map((db) => {
+                  const dbExpanded = expandedNodes[db.name] ?? false;
+                  const dbKey = db.name;
 
-                return (
-                  <div key={db.name} className="space-y-1">
-                    {/* Database Row */}
-                    <button
-                      onClick={() => toggleNode(dbKey)}
-                      className="w-full flex items-center justify-between px-2 py-1.5 rounded hover:bg-stone-100/70 text-left font-semibold text-stone-900 select-none group cursor-pointer"
-                    >
-                      <div className="flex items-center gap-1.5 truncate">
-                        {dbExpanded ? (
-                          <ChevronDown className="w-3.5 h-3.5 text-stone-400 shrink-0" />
-                        ) : (
-                          <ChevronRight className="w-3.5 h-3.5 text-stone-400 shrink-0" />
-                        )}
-                        <Database className="w-3.5 h-3.5 text-stone-600 shrink-0" />
-                        <span className="truncate font-mono-code text-[11px]">{db.name}</span>
-                      </div>
-                      <span className="text-[10px] font-normal text-stone-400 font-mono-code">
-                        {db.schemaCount} schemas
-                      </span>
-                    </button>
+                  return (
+                    <div key={db.name} className="space-y-1">
+                      {/* Database Row */}
+                      <button
+                        onClick={() => toggleNode(dbKey)}
+                        className="w-full flex items-center justify-between px-2 py-1.5 rounded hover:bg-stone-100/70 text-left font-semibold text-stone-900 select-none group cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5 truncate">
+                          {dbExpanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                          )}
+                          <Database className="w-3.5 h-3.5 text-stone-600 shrink-0" />
+                          <span className="truncate font-mono-code text-[11px]">{db.name}</span>
+                        </div>
+                        <span className="text-[10px] font-normal text-stone-400 font-mono-code">
+                          {db.schemaCount} schemas
+                        </span>
+                      </button>
 
-                    {/* Schemas under Database */}
-                    {dbExpanded && (
-                      <div className="pl-4 space-y-1 border-l border-stone-200 ml-3">
-                        {db.schemas.map((sch) => {
-                          const schKey = `${db.name}.${sch.name}`;
-                          const schExpanded = expandedNodes[schKey] ?? false;
+                      {/* Schemas under Database */}
+                      {dbExpanded && (
+                        <div className="pl-4 space-y-1 border-l border-stone-200 ml-3">
+                          {db.schemas.map((sch) => {
+                            const schKey = `${db.name}.${sch.name}`;
+                            const schExpanded = expandedNodes[schKey] ?? false;
 
-                          return (
-                            <div key={sch.name} className="space-y-1">
-                              {/* Schema Row */}
-                              <button
-                                onClick={() => toggleNode(schKey)}
-                                className="w-full flex items-center justify-between px-2 py-1 rounded hover:bg-stone-100/60 text-left font-medium text-stone-700 select-none cursor-pointer"
-                              >
-                                <div className="flex items-center gap-1.5 truncate">
-                                  {schExpanded ? (
-                                    <ChevronDown className="w-3 h-3 text-stone-400 shrink-0" />
-                                  ) : (
-                                    <ChevronRight className="w-3 h-3 text-stone-400 shrink-0" />
-                                  )}
-                                  <Layers className="w-3.5 h-3.5 text-stone-500 shrink-0" />
-                                  <span className="truncate font-mono-code text-[11px] text-stone-800">
-                                    {sch.name}
+                            return (
+                              <div key={sch.name} className="space-y-1">
+                                {/* Schema Row */}
+                                <button
+                                  onClick={() => toggleNode(schKey)}
+                                  className="w-full flex items-center justify-between px-2 py-1 rounded hover:bg-stone-100/60 text-left font-medium text-stone-700 select-none cursor-pointer"
+                                >
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    {schExpanded ? (
+                                      <ChevronDown className="w-3 h-3 text-stone-400 shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="w-3 h-3 text-stone-400 shrink-0" />
+                                    )}
+                                    <Layers className="w-3.5 h-3.5 text-stone-500 shrink-0" />
+                                    <span className="truncate font-mono-code text-[11px] text-stone-800">
+                                      {sch.name}
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] font-mono-code text-stone-400">
+                                    {sch.tableCount} tbls
                                   </span>
-                                </div>
-                                <span className="text-[10px] font-mono-code text-stone-400">
-                                  {sch.tableCount} tbls
-                                </span>
-                              </button>
+                                </button>
 
-                              {/* Tables under Schema */}
-                              {schExpanded && (
-                                <div className="pl-4 space-y-0.5 border-l border-stone-200 ml-2.5">
-                                  {sch.tables
-                                    .filter(
-                                      (t) =>
-                                        !treeSearch ||
-                                        t.name.toLowerCase().includes(treeSearch.toLowerCase())
-                                    )
-                                    .map((tbl) => {
-                                      const isSelected = selectedTable?.id === tbl.id || selectedTable?.name === tbl.name;
-                                      return (
-                                        <button
-                                          key={tbl.id || tbl.name}
-                                          onClick={() => handleSelectTable(tbl.id || tbl.name)}
-                                          className={`w-full flex items-center justify-between px-2 py-1 rounded text-left select-none cursor-pointer transition-colors ${
-                                            isSelected
-                                              ? 'bg-stone-900 text-white font-medium shadow-2xs'
-                                              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
-                                          }`}
-                                        >
-                                          <div className="flex items-center gap-1.5 truncate">
-                                            <TableIcon
-                                              className={`w-3 h-3 shrink-0 ${
-                                                isSelected ? 'text-white' : 'text-stone-400'
-                                              }`}
-                                            />
-                                            <span className="truncate font-mono-code text-[11px]">
-                                              {tbl.name}
-                                            </span>
-                                          </div>
-                                          {tbl.rowCount && (
-                                            <span
-                                              className={`text-[9px] font-mono-code ${
-                                                isSelected ? 'text-stone-300' : 'text-stone-400'
-                                              }`}
-                                            >
-                                              {tbl.rowCount > 1000000
-                                                ? `${(tbl.rowCount / 1000000).toFixed(1)}M`
-                                                : tbl.rowCount}
-                                            </span>
-                                          )}
-                                        </button>
-                                      );
-                                    })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                                {/* Tables under Schema */}
+                                {schExpanded && (
+                                  <div className="pl-4 space-y-0.5 border-l border-stone-200 ml-2.5">
+                                    {sch.tables
+                                      .filter(
+                                        (t) =>
+                                          !treeSearch ||
+                                          t.name.toLowerCase().includes(treeSearch.toLowerCase())
+                                      )
+                                      .map((tbl) => {
+                                        const isSelected = selectedTable?.id === tbl.id || selectedTable?.name === tbl.name;
+                                        return (
+                                          <button
+                                            key={tbl.id || tbl.name}
+                                            onClick={() => handleSelectTable(tbl.id || tbl.name)}
+                                            className={`w-full flex items-center justify-between px-2 py-1 rounded text-left select-none cursor-pointer transition-colors ${
+                                              isSelected
+                                                ? 'bg-stone-900 text-white font-medium shadow-2xs'
+                                                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-1.5 truncate">
+                                              <TableIcon
+                                                className={`w-3 h-3 shrink-0 ${
+                                                  isSelected ? 'text-white' : 'text-stone-400'
+                                                }`}
+                                              />
+                                              <span className="truncate font-mono-code text-[11px]">
+                                                {tbl.name}
+                                              </span>
+                                            </div>
+                                            {tbl.rowCount != null && (
+                                              <span
+                                                className={`text-[9px] font-mono-code ${
+                                                  isSelected ? 'text-stone-300' : 'text-stone-400'
+                                                }`}
+                                              >
+                                                {tbl.rowCount > 1000000
+                                                  ? `${(tbl.rowCount / 1000000).toFixed(1)}M`
+                                                  : tbl.rowCount}
+                                              </span>
+                                            )}
+                                          </button>
+                                        );
+                                      })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </Card>
         </div>
 
         {/* Right Side: Selected Table Details & Tabbed View (8 cols) */}
         <div className="lg:col-span-8 space-y-4">
-          {selectedTable ? (
+          {loading && !isRefreshing ? (
+            <Card className="p-16 text-center">
+              <RefreshCw className="w-6 h-6 animate-spin mx-auto text-stone-400 mb-2" />
+              <p className="text-xs font-medium text-stone-600">Loading catalog metadata from PostgreSQL...</p>
+            </Card>
+          ) : loadError ? (
+            <Card className="p-12 text-center border border-rose-200 bg-rose-50/40">
+              <div className="flex flex-col items-center justify-center space-y-3 max-w-md mx-auto">
+                <div className="p-3 bg-rose-100 rounded-full text-rose-600">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <h3 className="text-sm font-bold text-stone-900">Failed to Load Catalog</h3>
+                <p className="text-xs text-stone-600">{loadError}</p>
+                <Button size="sm" variant="primary" onClick={() => loadHierarchy(false)}>
+                  Retry Loading Catalog
+                </Button>
+              </div>
+            </Card>
+          ) : hierarchy.length === 0 ? (
+            <Card className="p-12 text-center border border-dashed border-stone-300 bg-white">
+              <div className="flex flex-col items-center justify-center space-y-3 max-w-md mx-auto">
+                <div className="p-3 bg-stone-100 rounded-full text-stone-600">
+                  <Database className="w-8 h-8" />
+                </div>
+                <h3 className="text-base font-bold text-stone-900 font-mono-code">
+                  No catalog metadata has been synchronized yet.
+                </h3>
+                <p className="text-xs text-stone-500 leading-relaxed max-w-sm">
+                  Connect your Snowflake data warehouse and run metadata synchronization to discover databases, schemas, tables, and column definitions.
+                </p>
+                <div className="pt-2 flex items-center gap-3">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => onNavigate('sources')}
+                    leftIcon={<Layers className="w-3.5 h-3.5" />}
+                  >
+                    Go to Data Sources
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => loadHierarchy(true)}
+                    leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+                  >
+                    Refresh Catalog
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ) : selectedTable ? (
             <>
               {/* Table Master Header Card */}
               <Card className="p-6">
@@ -395,7 +523,19 @@ export const CatalogPage: React.FC<{
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onNavigate('explorer')}
+                      onClick={() =>
+                        onNavigate(
+                          'explorer',
+                          selectedTable
+                            ? {
+                                sourceId: selectedTable.sourceId,
+                                database: selectedTable.database,
+                                schema: selectedTable.schema,
+                                table: selectedTable.name,
+                              }
+                            : undefined
+                        )
+                      }
                       leftIcon={<Terminal className="w-3.5 h-3.5" />}
                     >
                       Explore Data
@@ -450,25 +590,25 @@ export const CatalogPage: React.FC<{
                     <Card padding="sm">
                       <div className="text-[10px] text-stone-400 uppercase font-medium">Total Rows</div>
                       <div className="text-base font-bold text-stone-900 font-mono-code mt-1">
-                        {selectedTable.rowCount?.toLocaleString() || '142,850,900'}
+                        {selectedTable.rowCount != null ? selectedTable.rowCount.toLocaleString() : '0'}
                       </div>
                     </Card>
                     <Card padding="sm">
                       <div className="text-[10px] text-stone-400 uppercase font-medium">Table Size</div>
                       <div className="text-base font-bold text-stone-900 font-mono-code mt-1">
-                        {selectedTable.sizeFormatted || '138.0 GB'}
+                        {selectedTable.sizeFormatted || '0 B'}
                       </div>
                     </Card>
                     <Card padding="sm">
                       <div className="text-[10px] text-stone-400 uppercase font-medium">Columns</div>
                       <div className="text-base font-bold text-stone-900 font-mono-code mt-1">
-                        {selectedTable.columns?.length || 14}
+                        {selectedTable.columns?.length || 0}
                       </div>
                     </Card>
                     <Card padding="sm">
                       <div className="text-[10px] text-stone-400 uppercase font-medium">Sync Freshness</div>
                       <div className="text-base font-bold text-emerald-800 font-mono-code mt-1">
-                        {selectedTable.lastSyncedAt || '3 mins ago'}
+                        {selectedTable.lastSyncedAt ? new Date(selectedTable.lastSyncedAt).toLocaleString() : 'Live'}
                       </div>
                     </Card>
                   </div>
@@ -480,20 +620,20 @@ export const CatalogPage: React.FC<{
                     </div>
                     <div className="divide-y divide-stone-100 text-xs font-mono-code">
                       <div className="px-4 py-2.5 flex justify-between">
-                        <span className="text-stone-500 font-sans">Owner Role:</span>
-                        <span className="text-stone-800 font-semibold">{selectedTable.owner}</span>
+                        <span className="text-stone-500 font-sans">Table Type:</span>
+                        <span className="text-stone-800 font-semibold">{selectedTable.tags?.[0] || 'TABLE'}</span>
                       </div>
                       <div className="px-4 py-2.5 flex justify-between">
                         <span className="text-stone-500 font-sans">Source Warehouse:</span>
-                        <span className="text-stone-800">{selectedTable.sourceName} (COMPUTE_WH_XL)</span>
+                        <span className="text-stone-800">{selectedTable.sourceName} (Source #{selectedTable.sourceId})</span>
                       </div>
                       <div className="px-4 py-2.5 flex justify-between">
-                        <span className="text-stone-500 font-sans">Clustering &amp; Partitions:</span>
-                        <span className="text-stone-800">ORDER_TIMESTAMP, CUSTOMER_ID</span>
+                        <span className="text-stone-500 font-sans">Database / Schema:</span>
+                        <span className="text-stone-800">{selectedTable.database}.{selectedTable.schema}</span>
                       </div>
                       <div className="px-4 py-2.5 flex justify-between">
                         <span className="text-stone-500 font-sans">App Metadata Store:</span>
-                        <span className="text-stone-800">PostgreSQL (Indexed in Redis)</span>
+                        <span className="text-stone-800">PostgreSQL (catalog_columns &amp; datasets)</span>
                       </div>
                     </div>
                   </Card>

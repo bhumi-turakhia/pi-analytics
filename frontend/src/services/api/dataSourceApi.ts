@@ -27,11 +27,15 @@ export interface TestConnectionResult {
   success: boolean;
   latencyMs: number;
   message: string;
+  error?: string;
+  sourceId?: number | null;
+  sourceType?: string;
   details?: {
     snowflakeVersion?: string;
     warehouseStatus?: string;
     accountEdition?: string;
     accessibleDatabases?: string[];
+    [key: string]: any;
   };
 }
 
@@ -45,6 +49,7 @@ export interface BackendDataSource {
   source_type: string;
   created_at: string;
   last_sync_at?: string | null;
+  status?: string | null;
 }
 
 function formatSyncTime(timestampStr?: string | null): string {
@@ -74,7 +79,7 @@ export function mapBackendSource(source: BackendDataSource): DataSource {
     name: source.name,
     platform: (source.source_type || 'snowflake') as DataSource['platform'],
     environment: 'production',
-    status: 'healthy',
+    status: (source.status as DataSource['status']) || 'healthy',
     accountIdentifier: source.source_type?.toUpperCase() === 'SALESFORCE' ? 'SALESFORCE_CLOUD' : 'SNOWFLAKE',
     warehouse: source.source_type?.toUpperCase() === 'SALESFORCE' ? 'SALES_CLOUD_PROD' : 'COMPUTE_WH',
     database: source.source_type?.toUpperCase() === 'SALESFORCE' ? 'SALESFORCE_REVENUE_DB' : 'SNOWFLAKE',
@@ -133,44 +138,84 @@ export const dataSourceApi = {
   },
 
   /**
-   * Test a connection (frontend simulation).
+   * Test a data source connection via FastAPI backend.
+   * If an existing source id is provided: POST /api/sources/{id}/test-connection
+   * If unsaved configuration (wizard): POST /api/sources/test-connection
    */
   async testConnection(
-    payload: Partial<CreateDataSourcePayload>
+    payload: Partial<CreateDataSourcePayload> & { id?: string }
   ): Promise<TestConnectionResult> {
-    if (payload.platform === 'databricks') {
+    try {
+      const endpoint = payload.id
+        ? `${API_BASE_URL}/api/sources/${payload.id}/test-connection`
+        : `${API_BASE_URL}/api/sources/test-connection`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          source_type: payload.platform || 'snowflake',
+          platform: payload.platform || 'snowflake',
+          account_identifier: payload.accountIdentifier,
+          username: payload.username,
+          password: payload.password,
+          warehouse: payload.warehouse,
+          database: payload.database,
+          default_schema: payload.defaultSchema,
+          role: payload.role,
+        }),
+      });
+
+      if (!response.ok) {
+        let errorMsg = `Failed to test connection: HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData?.detail) {
+            errorMsg = Array.isArray(errData.detail)
+              ? errData.detail.map((d: any) => d.msg || d.message).join(', ')
+              : errData.detail;
+          }
+        } catch {}
+        return {
+          success: false,
+          latencyMs: 0,
+          message: 'Connection test failed.',
+          error: errorMsg,
+        };
+      }
+
+      const data = await response.json();
+
+      return {
+        success: Boolean(data.success),
+        latencyMs: data.latency_ms ?? 0,
+        message:
+          data.message ||
+          (data.success ? 'Connection established successfully.' : 'Connection test failed.'),
+        error: data.error,
+        sourceId: data.source_id,
+        sourceType: data.source_type,
+        details: data.details
+          ? {
+              snowflakeVersion: data.details.snowflake_version,
+              warehouseStatus: data.details.warehouse,
+              accountEdition: data.details.account,
+              accessibleDatabases: data.details.database ? [data.details.database] : undefined,
+              ...data.details,
+            }
+          : undefined,
+      };
+    } catch (error: any) {
+      console.error('Failed to test connection:', error);
       return {
         success: false,
-        latencyMs: 400,
-        message:
-          'Databricks connector is scheduled for Phase 2 release. Please use Snowflake Native connector.',
+        latencyMs: 0,
+        message: 'Could not connect to backend connection testing service.',
+        error: error?.message || 'Network error communicating with the backend API.',
       };
     }
-
-    if (!payload.accountIdentifier || !payload.username) {
-      return {
-        success: false,
-        latencyMs: 120,
-        message:
-          'Missing required credentials. Account Identifier and Username are mandatory.',
-      };
-    }
-
-    return {
-      success: true,
-      latencyMs: 248,
-      message: 'Connection established successfully.',
-      details: {
-        snowflakeVersion: '8.14.2 Enterprise Edition',
-        warehouseStatus: `${payload.warehouse || 'COMPUTE_WH'} (STARTED - X-Small)`,
-        accountEdition: 'Enterprise AWS us-east-1',
-        accessibleDatabases: [
-          payload.database || 'SNOWFLAKE',
-          'SHARED_COMMON_DB',
-          'SNOWFLAKE',
-        ],
-      },
-    };
   },
 
   /**
@@ -251,16 +296,59 @@ export const dataSourceApi = {
   },
 
   /**
-   * Disconnect a data source.
+   * Disconnect a data source via FastAPI backend.
+   * POST http://127.0.0.1:8000/api/sources/{id}/disconnect
    */
-  async disconnect(_id: string): Promise<DataSource> {
-    throw new Error('Disconnect is not connected to the backend yet.');
+  async disconnect(id: string): Promise<DataSource> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sources/${id}/disconnect`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        let errorMsg = `Failed to disconnect data source: HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData?.detail) {
+            errorMsg = errData.detail;
+          }
+        } catch {}
+        throw new Error(errorMsg);
+      }
+
+      const data: BackendDataSource = await response.json();
+      return mapBackendSource(data);
+    } catch (error) {
+      console.error(`Failed to disconnect data source ${id}:`, error);
+      throw error;
+    }
   },
 
   /**
-   * Delete a data source.
+   * Delete a data source via FastAPI backend.
+   * DELETE http://127.0.0.1:8000/api/sources/{id}
    */
-  async delete(_id: string): Promise<boolean> {
-    throw new Error('Delete is not connected to the backend yet.');
+  async delete(id: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sources/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        let errorMsg = `Failed to delete data source: HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData?.detail) {
+            errorMsg = errData.detail;
+          }
+        } catch {}
+        throw new Error(errorMsg);
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`Failed to delete data source ${id}:`, error);
+      throw error;
+    }
   },
 };

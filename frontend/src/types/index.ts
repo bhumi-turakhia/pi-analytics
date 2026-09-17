@@ -185,6 +185,11 @@ export interface ChatMessage {
   sqlQuery?: string;
   appliedChanges?: string[];
   suggestedFollowUps?: string[];
+  visualization?: any;
+  columns?: any[];
+  rows?: Record<string, any>[];
+  canAddToDashboard?: boolean;
+  isAddedToDashboard?: boolean;
 }
 
 export type NavigationPage = 

@@ -377,6 +377,7 @@ export const AddDataSourceWizard: React.FC<AddDataSourceWizardProps> = ({
                   variant="outline"
                   size="sm"
                   isLoading={isTesting}
+                  disabled={isTesting}
                   onClick={handleTestConnection}
                   leftIcon={<KeyRound className="w-3.5 h-3.5" />}
                 >
@@ -406,6 +407,19 @@ export const AddDataSourceWizard: React.FC<AddDataSourceWizardProps> = ({
                       {testResult.latencyMs}ms latency
                     </span>
                   </div>
+                  {testResult.error && (
+                    <div className="mt-2 pt-2 border-t border-rose-200 text-[11px] font-normal text-rose-900 leading-snug">
+                      {testResult.error}
+                    </div>
+                  )}
+                  {testResult.details?.snowflakeVersion && (
+                    <div className="mt-2 pt-2 border-t border-emerald-200 text-[11px] font-mono-code text-emerald-900 flex items-center gap-3">
+                      <span>Snowflake v{testResult.details.snowflakeVersion}</span>
+                      {testResult.details.warehouseStatus && (
+                        <span>• WH: {testResult.details.warehouseStatus}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

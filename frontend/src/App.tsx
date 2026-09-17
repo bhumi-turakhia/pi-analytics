@@ -47,7 +47,7 @@ export default function App() {
           />
         );
       case 'explorer':
-        return <ExplorerPage onNavigate={handleNavigate} />;
+        return <ExplorerPage onNavigate={handleNavigate} initialContext={navigationContext} />;
       case 'analytics':
         return <AnalyticsPage onNavigate={handleNavigate} />;
       case 'activity':
