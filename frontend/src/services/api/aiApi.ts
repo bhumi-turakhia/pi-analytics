@@ -5,8 +5,8 @@
  * The backend uses Gemini to generate structured analytics responses
  * grounded in real catalog metadata.
  *
- * When the backend returns 503 (no API key configured) the caller should
- * fall back to the client-side executeDashboardPrompt() simulation.
+ * When the backend returns 503 (no API key configured), the caller receives
+ * an explicit message stating that a Gemini API key is required.
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';

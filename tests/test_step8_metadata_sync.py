@@ -317,15 +317,17 @@ class Step8MetadataSyncTests(unittest.TestCase):
     # 11. Credentials are not persisted in database
     def test_11_credentials_not_persisted(self):
         with engine.connect() as conn:
-            # Inspect table columns for data_sources, datasets, catalog_columns
-            cols = conn.execute(
-                text("""
-                    SELECT table_name, column_name
-                    FROM information_schema.columns
-                    WHERE table_name IN ('data_sources', 'datasets', 'catalog_columns')
-                """)
-            ).fetchall()
-            col_names = [c.column_name.lower() for c in cols]
+            if conn.engine.dialect.name == "sqlite":
+                col_names = [c[1].lower() for c in conn.execute(text("PRAGMA table_info(data_sources)")).fetchall()]
+            else:
+                cols = conn.execute(
+                    text("""
+                        SELECT table_name, column_name
+                        FROM information_schema.columns
+                        WHERE table_name IN ('data_sources', 'datasets', 'catalog_columns')
+                    """)
+                ).fetchall()
+                col_names = [c.column_name.lower() for c in cols]
             self.assertNotIn("password", col_names)
             self.assertNotIn("secret", col_names)
             self.assertNotIn("token", col_names)

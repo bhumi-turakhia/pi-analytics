@@ -408,8 +408,12 @@ class Step10CopilotAndDashboardTests(unittest.TestCase):
 
         with engine.connect() as conn:
             # Inspect table columns for dashboards and dashboard_widgets
-            dash_cols = [c[0] for c in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dashboards'")).fetchall()]
-            widget_cols = [c[0] for c in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dashboard_widgets'")).fetchall()]
+            if conn.engine.dialect.name == "sqlite":
+                dash_cols = [c[1] for c in conn.execute(text("PRAGMA table_info(dashboards)")).fetchall()]
+                widget_cols = [c[1] for c in conn.execute(text("PRAGMA table_info(dashboard_widgets)")).fetchall()]
+            else:
+                dash_cols = [c[0] for c in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dashboards'")).fetchall()]
+                widget_cols = [c[0] for c in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dashboard_widgets'")).fetchall()]
 
             for forbidden in ("password", "secret", "token", "api_key", "credential"):
                 self.assertNotIn(forbidden, dash_cols)

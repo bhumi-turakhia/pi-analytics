@@ -56,6 +56,16 @@ class WidgetRunPayload(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+def _format_dt(val: Any) -> Optional[str]:
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
 @router.get("", response_model=List[Dict[str, Any]])
 def list_dashboards():
     """List all persisted dashboards with widget counts and connected source names."""
@@ -84,8 +94,8 @@ def list_dashboards():
                 "source_id": r.source_id,
                 "source_name": r.source_name,
                 "source_type": r.source_type,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                "created_at": _format_dt(r.created_at),
+                "updated_at": _format_dt(r.updated_at),
                 "widget_count": int(r.widget_count or 0),
             }
             for r in rows
@@ -115,8 +125,8 @@ def create_dashboard(payload: DashboardCreatePayload):
             "id": row.id,
             "name": row.name,
             "source_id": row.source_id,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "created_at": _format_dt(row.created_at),
+            "updated_at": _format_dt(row.updated_at),
             "widgets": [],
         }
 
@@ -177,8 +187,8 @@ def get_dashboard(dashboard_id: int):
                 "position": w.position,
                 "width": w.width,
                 "height": w.height,
-                "created_at": w.created_at.isoformat() if w.created_at else None,
-                "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+                "created_at": _format_dt(w.created_at),
+                "updated_at": _format_dt(w.updated_at),
             })
 
         return {
@@ -187,8 +197,8 @@ def get_dashboard(dashboard_id: int):
             "source_id": d_row.source_id,
             "source_name": d_row.source_name,
             "source_type": d_row.source_type,
-            "created_at": d_row.created_at.isoformat() if d_row.created_at else None,
-            "updated_at": d_row.updated_at.isoformat() if d_row.updated_at else None,
+            "created_at": _format_dt(d_row.created_at),
+            "updated_at": _format_dt(d_row.updated_at),
             "widgets": widgets,
         }
 
@@ -267,10 +277,11 @@ def add_widget(dashboard_id: int, payload: WidgetCreatePayload):
     # 3. Insert widget
     source_id = payload.source_id or d_row.source_id
     spec_json = json.dumps(payload.visualization_spec)
+    cast_clause = "CAST(:visualization_spec AS jsonb)" if engine.dialect.name != "sqlite" else ":visualization_spec"
 
     with engine.begin() as conn:
         w_row = conn.execute(
-            text("""
+            text(f"""
                 INSERT INTO dashboard_widgets (
                     dashboard_id, title, widget_type, source_id,
                     database_name, schema_name, table_name,
@@ -279,7 +290,7 @@ def add_widget(dashboard_id: int, payload: WidgetCreatePayload):
                 VALUES (
                     :dashboard_id, :title, :widget_type, :source_id,
                     :database_name, :schema_name, :table_name,
-                    :sql_query, CAST(:visualization_spec AS jsonb), :position, :width, :height
+                    :sql_query, {cast_clause}, :position, :width, :height
                 )
                 RETURNING 
                     id, dashboard_id, title, widget_type, source_id,
@@ -324,8 +335,8 @@ def add_widget(dashboard_id: int, payload: WidgetCreatePayload):
             "position": w_row.position,
             "width": w_row.width,
             "height": w_row.height,
-            "created_at": w_row.created_at.isoformat() if w_row.created_at else None,
-            "updated_at": w_row.updated_at.isoformat() if w_row.updated_at else None,
+            "created_at": _format_dt(w_row.created_at),
+            "updated_at": _format_dt(w_row.updated_at),
         }
 
 

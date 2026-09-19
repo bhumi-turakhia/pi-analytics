@@ -48,22 +48,42 @@ def get_datasets(source_id: Optional[int] = None):
         dataset_ids = [row.id for row in dataset_rows]
 
         # 2. Fetch columns in a single query avoiding N+1
-        col_result = connection.execute(
-            text("""
-                SELECT
-                    id,
-                    dataset_id,
-                    column_name,
-                    data_type,
-                    is_nullable,
-                    ordinal_position,
-                    comment
-                FROM catalog_columns
-                WHERE dataset_id = ANY(:dataset_ids)
-                ORDER BY dataset_id, ordinal_position
-            """),
-            {"dataset_ids": dataset_ids}
-        )
+        if connection.engine.dialect.name == "sqlite":
+            placeholders = ", ".join(f":id_{i}" for i in range(len(dataset_ids)))
+            query_params = {f"id_{i}": ds_id for i, ds_id in enumerate(dataset_ids)}
+            col_result = connection.execute(
+                text(f"""
+                    SELECT
+                        id,
+                        dataset_id,
+                        column_name,
+                        data_type,
+                        is_nullable,
+                        ordinal_position,
+                        comment
+                    FROM catalog_columns
+                    WHERE dataset_id IN ({placeholders})
+                    ORDER BY dataset_id, ordinal_position
+                """),
+                query_params
+            )
+        else:
+            col_result = connection.execute(
+                text("""
+                    SELECT
+                        id,
+                        dataset_id,
+                        column_name,
+                        data_type,
+                        is_nullable,
+                        ordinal_position,
+                        comment
+                    FROM catalog_columns
+                    WHERE dataset_id = ANY(:dataset_ids)
+                    ORDER BY dataset_id, ordinal_position
+                """),
+                {"dataset_ids": dataset_ids}
+            )
 
         columns_by_dataset: Dict[int, list] = {}
         for col_row in col_result:

@@ -191,6 +191,12 @@ def sync_source(source_id: int):
             )
         _disconnected_sources.discard(source_id)
 
+        # Count actual cataloged tables for this source
+        dataset_count = connection.execute(
+            text("SELECT COUNT(*) FROM datasets WHERE source_id = :source_id"),
+            {"source_id": source_id}
+        ).scalar() or 0
+
         # 2. Insert a new successful pipeline run
         run_result = connection.execute(
             text("""
@@ -198,7 +204,7 @@ def sync_source(source_id: int):
                 VALUES (:source_id, 'SUCCESS', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :rows_processed)
                 RETURNING id, source_id, status, started_at, completed_at, rows_processed
             """),
-            {"source_id": source_id, "rows_processed": 1250}
+            {"source_id": source_id, "rows_processed": dataset_count}
         )
         run_row = run_result.fetchone()
 

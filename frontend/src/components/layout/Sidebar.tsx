@@ -31,9 +31,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const navItems: { id: NavigationPage; label: string; icon: React.ReactNode; badge?: string }[] = [
-    { id: 'overview', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" />, badge: 'AI Copilot' },
-    { id: 'sources', label: 'Data Sources', icon: <Database className="w-4 h-4" />, badge: '5 Active' },
-    { id: 'catalog', label: 'Data Catalog', icon: <Layers className="w-4 h-4" />, badge: '248 Tables' },
+    { id: 'overview', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: 'sources', label: 'Data Sources', icon: <Database className="w-4 h-4" /> },
+    { id: 'catalog', label: 'Data Catalog', icon: <Layers className="w-4 h-4" /> },
     { id: 'explorer', label: 'SQL Explorer', icon: <Terminal className="w-4 h-4" /> },
     { id: 'analytics', label: 'Metric Studio', icon: <BarChart3 className="w-4 h-4" /> },
     { id: 'activity', label: 'Audit Log', icon: <ActivityIcon className="w-4 h-4" /> },

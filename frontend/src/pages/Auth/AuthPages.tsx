@@ -21,7 +21,7 @@ export const LoginPage: React.FC<{ onNavigate: (page: NavigationPage) => void }>
       await authApi.login(email, password);
       onNavigate('overview');
     } catch (err: any) {
-      setError('Invalid enterprise credentials or inactive SSO session.');
+      setError(err?.message || 'Authentication is not implemented. Platform is running in unauthenticated development mode.');
     } finally {
       setIsLoading(false);
     }
@@ -43,14 +43,14 @@ export const LoginPage: React.FC<{ onNavigate: (page: NavigationPage) => void }>
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-6 sm:px-10 shadow-xs border border-neutral-300 rounded-xl space-y-6">
           <div>
-            <h3 className="text-sm font-bold text-black">Welcome back</h3>
+            <h3 className="text-sm font-bold text-black">Platform Mode</h3>
             <p className="text-xs text-neutral-600 font-medium mt-0.5">
-              Sign in with your enterprise credentials or Okta Single Sign-On.
+              Authentication service is not implemented. Platform is running in unauthenticated development mode.
             </p>
           </div>
 
           {error && (
-            <div className="p-3 bg-rose-50 border border-rose-300 rounded text-xs text-rose-950 font-medium">
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded text-xs text-amber-950 font-medium">
               {error}
             </div>
           )}
@@ -104,14 +104,14 @@ export const LoginPage: React.FC<{ onNavigate: (page: NavigationPage) => void }>
             </Button>
           </form>
 
-          {/* Okta SSO Option */}
+          {/* Dev Mode Option */}
           <div className="relative pt-2">
             <div className="absolute inset-0 flex items-center pt-2">
               <div className="w-full border-t border-neutral-200" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
               <span className="bg-white px-2 text-neutral-500 text-[10px] font-bold tracking-wider">
-                Or SSO Access
+                Or Dev Access
               </span>
             </div>
           </div>
@@ -121,17 +121,16 @@ export const LoginPage: React.FC<{ onNavigate: (page: NavigationPage) => void }>
             variant="outline"
             size="md"
             onClick={() => {
-              authApi.login('m.vance@acmecorp.internal');
               onNavigate('overview');
             }}
             className="w-full"
           >
-            Continue with Corporate SAML 2.0 (Okta)
+            Continue in Unauthenticated Dev Mode
           </Button>
 
           <div className="pt-2 border-t border-neutral-200 flex items-center justify-center gap-1.5 text-[11px] text-neutral-500 font-medium">
             <ShieldCheck className="w-3.5 h-3.5 text-black" />
-            <span>Encrypted with TLS 1.3 &amp; PostgreSQL Metadata Store</span>
+            <span>Unauthenticated Dev Mode Active</span>
           </div>
         </div>
       </div>

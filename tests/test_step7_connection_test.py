@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 from connectors.base import ConnectionTestResult
 from connectors.snowflake import SnowflakeConnector
-from connectors import test_source_connection
+from connectors import test_source_connection as dispatch_test_source_connection
 from backend.app.database import engine
 from backend.app.routes import sources
 from backend.app.routes.sources import ConnectionTestPayload
@@ -168,11 +168,14 @@ class Step7ConnectionTestTests(unittest.TestCase):
     # 6. Zero persistence: Verify no passwords or credentials were saved to PostgreSQL
     def test_06_zero_credential_persistence(self):
         with engine.connect() as conn:
-            columns = [
-                c[0] for c in conn.execute(
-                    text("SELECT column_name FROM information_schema.columns WHERE table_name = 'data_sources'")
-                )
-            ]
+            if conn.engine.dialect.name == "sqlite":
+                columns = [r[1] for r in conn.execute(text("PRAGMA table_info(data_sources)")).fetchall()]
+            else:
+                columns = [
+                    c[0] for c in conn.execute(
+                        text("SELECT column_name FROM information_schema.columns WHERE table_name = 'data_sources'")
+                    )
+                ]
             self.assertNotIn("password", columns)
             self.assertNotIn("secret", columns)
             self.assertNotIn("token", columns)

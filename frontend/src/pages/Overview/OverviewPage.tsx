@@ -141,36 +141,23 @@ export const OverviewPage: React.FC<{ onNavigate: (page: NavigationPage, context
         {/* KPI 1: Connected Sources */}
         <EnhancedKPICard
           label="Connected Sources"
-          value={String(kpis?.connectedSources ?? 12)}
-          change="+2 this mo"
-          isPositive={true}
-          subtext="Snowflake, Salesforce, BigQuery"
-          sparkline={[7, 8, 8, 9, 10, 11, 12]}
+          value={String(kpis?.connectedSources ?? 0)}
+          subtext="Snowflake &amp; Salesforce endpoints"
           variant="emerald"
           type="count"
-          badge="Live Feed"
-          breakdown={[
-            { label: 'Data Warehouses', value: '4' },
-            { label: 'SaaS / CRM', value: '8' },
-          ]}
-          highLow={{ high: '12 Active', low: '6 Initial' }}
+          badge="Live Sources"
           icon={<Database className="w-4 h-4" />}
           onDrilldown={() => onNavigate('sources')}
         />
 
-        {/* KPI 2: Healthy Connections SLA */}
+        {/* KPI 2: Healthy Connections */}
         <EnhancedKPICard
           label="Healthy Connections"
-          value={`${kpis?.healthyConnections ?? 10} / 12`}
-          change="91.7% SLA"
-          isPositive={true}
-          subtext="1 warning, 1 pending lakehouse"
-          sparkline={[98.5, 99.2, 98.9, 99.8, 99.4, 99.9, 100]}
+          value={`${kpis?.healthyConnections ?? 0} / ${kpis?.connectedSources ?? 0}`}
+          subtext="Verified database endpoints"
           variant="blue"
           type="sla"
-          badge="99.9% Uptime"
-          target={{ current: 10, goal: 12, label: 'Health Goal' }}
-          highLow={{ high: '100% SLA', low: '91.7%' }}
+          badge="Uptime Status"
           icon={<CheckCircle2 className="w-4 h-4" />}
           onDrilldown={() => onNavigate('sources')}
         />
@@ -178,19 +165,11 @@ export const OverviewPage: React.FC<{ onNavigate: (page: NavigationPage, context
         {/* KPI 3: Cataloged Tables */}
         <EnhancedKPICard
           label="Cataloged Tables"
-          value={String(kpis?.catalogedTables ?? 248)}
-          change="+12% WoW"
-          isPositive={true}
-          subtext="Snowflake columnar compressed"
-          sparkline={[195, 208, 218, 226, 235, 242, 248]}
+          value={String(kpis?.catalogedTables ?? 0)}
+          subtext="Columnar compressed metadata"
           variant="indigo"
           type="storage"
-          badge="3,840 GB"
-          breakdown={[
-            { label: 'Fact Tables', value: '86' },
-            { label: 'Dimension', value: '162' },
-          ]}
-          highLow={{ high: '248 Tables', low: '180' }}
+          badge={`${kpis?.storageUsageGb ?? 0} GB`}
           icon={<Table className="w-4 h-4" />}
           onDrilldown={() => onNavigate('catalog')}
         />
@@ -198,16 +177,11 @@ export const OverviewPage: React.FC<{ onNavigate: (page: NavigationPage, context
         {/* KPI 4: Available Schemas */}
         <EnhancedKPICard
           label="Available Schemas"
-          value={String(kpis?.availableSchemas ?? 36)}
-          change="98.4% Fresh"
-          isPositive={true}
-          subtext="Auto-introspected metadata"
-          sparkline={[28, 30, 31, 32, 34, 35, 36]}
+          value={String(kpis?.availableSchemas ?? 0)}
+          subtext="Auto-introspected schemas"
           variant="amber"
           type="count"
-          badge="4 Active DBs"
-          target={{ current: 36, goal: 40, label: 'Introspection Coverage' }}
-          highLow={{ high: '36 Schemas', low: '22' }}
+          badge="Discovered Schemas"
           icon={<Layers className="w-4 h-4" />}
           onDrilldown={() => onNavigate('catalog')}
         />

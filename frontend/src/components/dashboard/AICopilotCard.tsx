@@ -132,19 +132,26 @@ export const AICopilotCard: React.FC<AICopilotCardProps> = ({
           showToast('success', 'Copilot Answered', `Gemini analyzed: "${promptText}"`);
         }
       } catch (aiErr: any) {
-        // 503 = no key configured, silently fall through to simulation
-        if (aiErr?.code !== 503) {
-          console.warn('[AI Copilot] Gemini error, using simulation:', aiErr?.message);
-        }
+        console.warn('[AI Copilot] Gemini API call unsuccessful:', aiErr?.message);
       }
 
-      // ── Fallback: client-side simulation ─────────────────────────────
+      // ── Explicit unconfigured / error message ──────────────────────────
       if (!usedAI) {
-        await new Promise((resolve) => setTimeout(resolve, 550));
-        const { updatedDashboard, responseMessage } = executeDashboardPrompt(dashboardState, promptText);
-        setDashboardState(updatedDashboard);
-        setMessages((prev) => [...prev, responseMessage]);
-        showToast('success', 'Copilot Answered', `Processed query: "${promptText}"`);
+        const errorMsg: ChatMessage = {
+          id: `msg_ai_err_${Date.now()}`,
+          sender: 'assistant',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          content: 'AI Copilot requires a configured Gemini API key.',
+          appliedChanges: [
+            'API key verification required',
+            'Configure GEMINI_API_KEY in backend environment to enable AI Copilot',
+          ],
+          suggestedFollowUps: [
+            'Connect a data source and run a query',
+          ],
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        showToast('warning', 'Gemini Not Configured', 'AI Copilot requires a configured Gemini API key.');
       }
     } catch {
       showToast('error', 'Execution Error', 'Unable to process query against data catalog.');
