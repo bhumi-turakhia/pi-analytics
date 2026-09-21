@@ -2,7 +2,7 @@ import { ActivityLog, PipelineRun } from '../../types';
 import { pipelineRunApi } from './pipelineRunApi';
 import { dataSourceApi } from './dataSourceApi';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 let localUserActions: ActivityLog[] = [];
 

@@ -9,7 +9,9 @@ if not os.getenv("DATABASE_URL"):
     if os.path.exists(env_backend):
         load_dotenv(env_backend)
 
-DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./pi_analytics.db"
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+default_db_path = os.path.join(PROJECT_ROOT, "pi_analytics.db")
+DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{default_db_path}"
 
 print("DATABASE_URL loaded:", os.getenv("DATABASE_URL") is not None, "Using:", DATABASE_URL)
 
