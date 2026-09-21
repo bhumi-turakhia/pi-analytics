@@ -66,11 +66,11 @@ export const KPIDeepDiveModal: React.FC<KPIDeepDiveModalProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast({
-      title: 'Telemetry Exported',
-      message: `Exported ${granularData.length} records for ${kpi.label} to CSV.`,
-      type: 'success',
-    });
+    showToast(
+      'success',
+      'Telemetry Exported',
+      `Exported ${granularData.length} records for ${kpi.label} to CSV.`
+    );
   };
 
   const values = granularData.map((d) => d.value);

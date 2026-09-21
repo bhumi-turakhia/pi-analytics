@@ -19,6 +19,12 @@ build/
 # Logs
 *.log
 
+# Databases & Cache
+*.db
+*.sqlite
+*.sqlite3
+.pytest_cache/
+
 # OS
 .DS_Store
 Thumbs.db

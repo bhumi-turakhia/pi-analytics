@@ -380,9 +380,9 @@ def _detect_date_range_from_question(q: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _detect_multi_metric_intent(q: str, numeric_cols) -> List[Tuple[str, str]]:
+def _detect_multi_metric_intent(q: str, numeric_cols) -> List[Tuple[str, str, str]]:
     """
-    Return [(col, alias), ...] for each numeric column whose tokens appear in the question.
+    Return [(col, alias, agg_func), ...] for each numeric column whose tokens appear in the question.
     Pure catalog-driven — no hardcoded column assumptions.
     """
     if not numeric_cols:
@@ -405,7 +405,20 @@ def _detect_multi_metric_intent(q: str, numeric_cols) -> List[Tuple[str, str]]:
             matched = True
 
         if matched and col not in used:
-            results.append((col, f"TOTAL_{col.upper()}"))
+            # Determine aggregation for this column
+            if any(k in q_lower for k in ("average", "avg", "mean")):
+                agg = "AVG"
+                prefix = "AVG"
+            elif any(k in q_lower for k in ("min", "minimum")):
+                agg = "MIN"
+                prefix = "MIN"
+            elif any(k in q_lower for k in ("max", "maximum")):
+                agg = "MAX"
+                prefix = "MAX"
+            else:
+                agg = "SUM"
+                prefix = "TOTAL"
+            results.append((col, f"{prefix}_{col.upper()}", agg))
             used.add(col)
     return results
 
@@ -437,6 +450,20 @@ def generate_catalog_grounded_sql(question: str, catalog, limit: int = 100) -> T
     q_lower = question.lower()
     target_num_col = _select_numeric_col_for_intent(q_lower, cols["numeric"])
 
+    # Determine default aggregation function for target_num_col
+    if any(k in q_lower for k in ("average", "avg", "mean")):
+        default_agg = "AVG"
+        alias_pfx = "AVG"
+    elif any(k in q_lower for k in ("min", "minimum", "lowest")) and not any(k in q_lower for k in ("bottom", "worst", "lowest 5", "lowest 10", "lowest 1", "lowest 2", "lowest 3")):
+        default_agg = "MIN"
+        alias_pfx = "MIN"
+    elif any(k in q_lower for k in ("max", "maximum", "highest")) and not any(k in q_lower for k in ("top", "best", "highest 5", "highest 10", "highest 1", "highest 2", "highest 3")):
+        default_agg = "MAX"
+        alias_pfx = "MAX"
+    else:
+        default_agg = "SUM"
+        alias_pfx = "TOTAL"
+
     def _find_date_col(prefer_period=False):
         if prefer_period:
             for c in cols["category"] + cols["date"]:
@@ -457,8 +484,8 @@ def generate_catalog_grounded_sql(question: str, catalog, limit: int = 100) -> T
     detected_metrics = _detect_multi_metric_intent(question, cols["numeric"])
     is_count_intent = any(k in q_lower for k in ("how many", "count of", "number of", "total count"))
     is_aggregate_only = (
-        any(k in q_lower for k in ("what is total", "show total", "overall", "sum of", "aggregate"))
-        and not any(k in q_lower for k in ("by ", "per ", "across ", "each "))
+        any(k in q_lower for k in ("what is total", "show total", "overall", "sum of", "aggregate", "what is the total", "show average", "what is the average", "average length", "mean"))
+        and not any(k in q_lower for k in ("by ", "per ", "across ", "each ", "breakdown"))
     )
 
     # ── 0. Multi-Metric Time-Series ───────────────────────────────────────────
@@ -470,8 +497,8 @@ def generate_catalog_grounded_sql(question: str, catalog, limit: int = 100) -> T
         if date_range and date_col:
             s, e = date_range
             where_clause = f' WHERE "{date_col}" >= \'{s}\' AND "{date_col}" <= \'{e}\' '
-        for col_name, alias in detected_metrics:
-            select_items.append(f'SUM("{col_name}") AS "{alias}"')
+        for col_name, alias, agg in detected_metrics:
+            select_items.append(f'{agg}("{col_name}") AS "{alias}"')
         if is_count_intent:
             select_items.append('COUNT(*) AS "TOTAL_COUNT"')
         if len(select_items) > (1 if date_col else 0):
@@ -484,13 +511,13 @@ def generate_catalog_grounded_sql(question: str, catalog, limit: int = 100) -> T
     if is_time_series and detected_metrics:
         date_col = _find_date_col(prefer_period=is_periodic)
         date_range = _detect_date_range_from_question(question)
-        col_name, alias = detected_metrics[0]
+        col_name, alias, agg = detected_metrics[0]
         where_clause = ""
         if date_range and date_col:
             s, e = date_range
             where_clause = f' WHERE "{date_col}" >= \'{s}\' AND "{date_col}" <= \'{e}\' '
         if date_col:
-            sql = f'SELECT "{date_col}", SUM("{col_name}") AS "{alias}" FROM {table_ref}{where_clause} GROUP BY "{date_col}" ORDER BY "{date_col}" ASC LIMIT {limit};'
+            sql = f'SELECT "{date_col}", {agg}("{col_name}") AS "{alias}" FROM {table_ref}{where_clause} GROUP BY "{date_col}" ORDER BY "{date_col}" ASC LIMIT {limit};'
             return sql, {"type": "line", "title": f'{alias.replace("_", " ").title()} over Time', "xField": date_col, "yField": alias}
 
     # ── 2. Count ──────────────────────────────────────────────────────────────
@@ -498,37 +525,43 @@ def generate_catalog_grounded_sql(question: str, catalog, limit: int = 100) -> T
         alias = f"TOTAL_{table_name.upper()}_COUNT"
         return f'SELECT COUNT(*) AS "{alias}" FROM {table_ref};', {"type": "kpi", "title": alias.replace("_", " ").title(), "xField": None, "yField": alias}
 
-    # ── 3. Total aggregate ────────────────────────────────────────────────────
+    # ── 3. Total aggregate (Scalar - NO GROUP BY) ─────────────────────────────
     if is_aggregate_only and target_num_col:
-        alias = f"TOTAL_{target_num_col.upper()}"
-        return f'SELECT SUM("{target_num_col}") AS "{alias}" FROM {table_ref};', {"type": "kpi", "title": alias.replace("_", " ").title(), "xField": None, "yField": alias}
+        alias = f"{alias_pfx}_{target_num_col.upper()}"
+        return f'SELECT {default_agg}("{target_num_col}") AS "{alias}" FROM {table_ref};', {"type": "kpi", "title": alias.replace("_", " ").title(), "xField": None, "yField": alias}
 
-    # ── 4. Top N ──────────────────────────────────────────────────────────────
-    if any(k in q_lower for k in ("top", "highest", "lowest", "best", "worst", "ranked", "ranking")):
+    # ── 4. Top N / Bottom N Ranking ───────────────────────────────────────────
+    if any(k in q_lower for k in ("top", "highest", "lowest", "best", "worst", "ranked", "ranking", "bottom", "least")):
         cat_col = _find_best_category_col(question, cols["category"] + cols["id"]) or (cols["category"][0] if cols["category"] else (cols["id"][0] if cols["id"] else None))
-        n_match = re.search(r"\btop\s+(\d+)", q_lower)
-        top_n = int(n_match.group(1)) if n_match else (1 if any(k in q_lower for k in ("highest", "lowest", "best", "worst")) else 10)
+        n_match = re.search(r"\b(?:top|bottom|lowest|highest|worst|best)\s+(\d+)", q_lower)
+        top_n = int(n_match.group(1)) if n_match else (1 if any(k in q_lower for k in ("highest", "lowest", "best", "worst", "least")) else 10)
         if cat_col and target_num_col:
-            alias = f"TOTAL_{target_num_col.upper()}"
-            order_dir = "ASC" if any(k in q_lower for k in ("lowest", "worst", "bottom")) else "DESC"
-            sql = f'SELECT "{cat_col}", SUM("{target_num_col}") AS "{alias}" FROM {table_ref} GROUP BY "{cat_col}" ORDER BY "{alias}" {order_dir} LIMIT {top_n};'
-            return sql, {"type": "bar" if top_n > 1 else "kpi", "title": f'Top {top_n} {cat_col.replace("_", " ").title()} by {alias.replace("_", " ").title()}' if top_n > 1 else f'Highest {cat_col.replace("_", " ").title()}', "xField": cat_col if top_n > 1 else None, "yField": alias}
+            alias = f"{alias_pfx}_{target_num_col.upper()}"
+            is_bottom = any(k in q_lower for k in ("lowest", "worst", "bottom", "least"))
+            order_dir = "ASC" if is_bottom else "DESC"
+            sql = f'SELECT "{cat_col}", {default_agg}("{target_num_col}") AS "{alias}" FROM {table_ref} GROUP BY "{cat_col}" ORDER BY "{alias}" {order_dir} LIMIT {top_n};'
+            return sql, {"type": "bar" if top_n > 1 else "kpi", "title": f'{"Bottom" if is_bottom else "Top"} {top_n} {cat_col.replace("_", " ").title()} by {alias.replace("_", " ").title()}' if top_n > 1 else f'{"Lowest" if is_bottom else "Highest"} {cat_col.replace("_", " ").title()}', "xField": cat_col if top_n > 1 else None, "yField": alias}
 
     # ── 5. Categorical breakdown ──────────────────────────────────────────────
     mentioned_cat = _find_best_category_col(question, cols["category"] + cols["date"])
     cat_in_q = mentioned_cat and _score_col_for_phrase(mentioned_cat, question) > 0
     is_breakdown = any(k in q_lower for k in ("by ", "per ", "across ", "each ", "breakdown", "compare", "group by"))
     if (cat_in_q or is_breakdown) and mentioned_cat and target_num_col:
-        alias = f"TOTAL_{target_num_col.upper()}"
-        sql = f'SELECT "{mentioned_cat}", SUM("{target_num_col}") AS "{alias}" FROM {table_ref} GROUP BY "{mentioned_cat}" ORDER BY "{alias}" DESC LIMIT {limit};'
+        alias = f"{alias_pfx}_{target_num_col.upper()}"
+        sql = f'SELECT "{mentioned_cat}", {default_agg}("{target_num_col}") AS "{alias}" FROM {table_ref} GROUP BY "{mentioned_cat}" ORDER BY "{alias}" DESC LIMIT {limit};'
         return sql, {"type": "bar", "title": f'{alias.replace("_", " ").title()} by {mentioned_cat.replace("_", " ").title()}', "xField": mentioned_cat, "yField": alias}
 
-    # ── 6. Single detected metric ─────────────────────────────────────────────
-    if detected_metrics:
-        col_name, alias = detected_metrics[0]
-        return f'SELECT SUM("{col_name}") AS "{alias}" FROM {table_ref};', {"type": "kpi", "title": alias.replace("_", " ").title(), "xField": None, "yField": alias}
+    # ── 6. Multi-Metric Aggregate (No dimensions) ─────────────────────────────
+    if len(detected_metrics) > 1:
+        select_items = [f'{agg}("{col_name}") AS "{alias}"' for col_name, alias, agg in detected_metrics]
+        return f'SELECT {", ".join(select_items)} FROM {table_ref};', {"type": "kpi", "title": f"{table_name} Summary", "xField": None, "yField": detected_metrics[0][1]}
 
-    # ── 7. Fallback: preview rows ─────────────────────────────────────────────
+    # ── 7. Single detected metric ─────────────────────────────────────────────
+    if detected_metrics:
+        col_name, alias, agg = detected_metrics[0]
+        return f'SELECT {agg}("{col_name}") AS "{alias}" FROM {table_ref};', {"type": "kpi", "title": alias.replace("_", " ").title(), "xField": None, "yField": alias}
+
+    # ── 8. Fallback: preview rows ─────────────────────────────────────────────
     all_col_names = [f'"{c["name"]}"' for c in tbl.get("columns", [])[:6]]
     cols_clause = ", ".join(all_col_names) if all_col_names else "*"
     return f'SELECT {cols_clause} FROM {table_ref} LIMIT {limit};', {"type": "table", "title": f'Data from {table_name}', "xField": None, "yField": None}
@@ -541,18 +574,24 @@ def generate_catalog_grounded_sql(question: str, catalog, limit: int = 100) -> T
 
 class AnalyticalIntent(BaseModel):
     """
-    Typed representation of the user's analytical intent, extracted from the Gemini response.
+    Typed representation of the user's analytical intent, extracted from the question or Gemini response.
     This is the source of truth for what SQL generation compiled — used for mechanical validation.
     """
-    metrics: List[str] = []           # column names being aggregated
-    aggregations: List[str] = []      # SUM / COUNT / AVG etc.
-    dimensions: List[str] = []        # GROUP BY columns
-    filters: List[str] = []           # WHERE conditions (descriptive)
-    time_range: Optional[str] = None  # e.g. "2025-01-01 to 2025-06-30"
-    grain: Optional[str] = None       # monthly / weekly / daily etc.
-    ordering: Optional[str] = None    # DESC / ASC
+    metrics: List[str] = []                     # column names being aggregated
+    aggregations: List[str] = []                # SUM / COUNT / AVG / MIN / MAX etc.
+    metric_aggregations: Dict[str, str] = {}    # mapping metric_col -> agg function (e.g. {"LOS_DAYS": "AVG"})
+    multiple_metrics: bool = False              # whether multiple metrics are requested
+    dimensions: List[str] = []                  # GROUP BY columns
+    filters: List[str] = []                     # WHERE conditions (descriptive / categorical)
+    date_range: Optional[Tuple[str, str]] = None # (start_iso, end_iso)
+    date_column: Optional[str] = None           # date column used for range
+    temporal_grain: Optional[str] = None        # "month", "year", "day", "quarter", "week"
+    sort_column: Optional[str] = None
+    sort_direction: Optional[str] = None        # "ASC" or "DESC"
+    ranking_direction: Optional[str] = None     # "ASC" or "DESC"
     limit: Optional[int] = None
-    intent_summary: str = ""          # free text from Gemini
+    calculated_metrics: List[str] = []
+    intent_summary: str = ""                    # free text summary
     can_answer: bool = True
 
 
@@ -565,24 +604,28 @@ def _extract_intent_from_gemini_response(data: dict, catalog) -> AnalyticalInten
     can_answer = data.get("can_answer", True)
     intent_summary = data.get("intent", "") or data.get("explanation", "")
     sql = data.get("sql") or ""
-    
+
     if not can_answer or not sql:
         return AnalyticalIntent(can_answer=False, intent_summary=intent_summary)
-    
+
     # Build a flat set of all catalog column names for matching
-    all_cols = {c["name"].upper() for t in catalog for c in t.get("columns", [])}
-    all_tables = {t["table"].upper() for t in catalog}
-    
-    # Parse metrics: columns inside SUM/AVG/MIN/MAX/COUNT(col) in SQL
+    all_cols = {c["name"].upper(): c["name"] for t in catalog for c in t.get("columns", [])}
+
+    # Parse metrics and their specific aggregation functions
     metrics = []
-    for m in re.finditer(r'\b(?:SUM|AVG|MIN|MAX)\s*\(\s*"?([A-Za-z0-9_]+)"?\s*\)', sql, re.IGNORECASE):
-        col = m.group(1).upper()
-        if col in all_cols:
-            metrics.append(col)
-    
+    metric_aggs = {}
+    for m in re.finditer(r'\b(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*"?([A-Za-z0-9_]+)"?\s*\)', sql, re.IGNORECASE):
+        agg_name = m.group(1).upper()
+        col_raw = m.group(2).upper()
+        if col_raw in all_cols:
+            real_col = all_cols[col_raw]
+            if real_col not in metrics:
+                metrics.append(real_col)
+            metric_aggs[real_col] = agg_name
+
     # Aggregation types present
     agg_types = list(set(re.findall(r'\b(SUM|AVG|MIN|MAX|COUNT)\b', sql, re.IGNORECASE)))
-    
+
     # Dimensions: columns in GROUP BY
     dimensions = []
     gb_match = re.search(r'\bGROUP\s+BY\s+([^ORDER^LIMIT^;]+)', sql, re.IGNORECASE)
@@ -590,46 +633,62 @@ def _extract_intent_from_gemini_response(data: dict, catalog) -> AnalyticalInten
         for raw in gb_match.group(1).split(","):
             col = raw.strip().strip('"').upper()
             if col in all_cols:
-                dimensions.append(col)
-    
+                dimensions.append(all_cols[col])
+
     # Filters: WHERE clause
     filters = []
     wh_match = re.search(r'\bWHERE\s+(.+?)(?:\bGROUP|\bORDER|\bLIMIT|;|$)', sql, re.IGNORECASE | re.DOTALL)
     if wh_match:
         filters = [wh_match.group(1).strip()]
-    
+
     # Time range from filters
     time_range = None
+    date_range_tuple = None
     date_m = re.search(r'(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})', sql)
     if date_m:
         time_range = f"{date_m.group(1)} to {date_m.group(2)}"
-    
+        date_range_tuple = (date_m.group(1), date_m.group(2))
+
     # Grain from GROUP BY (monthly/weekly etc.)
     grain = None
     if dimensions:
         d = dimensions[0].lower()
         if "month" in d:
-            grain = "monthly"
+            grain = "month"
         elif "week" in d:
-            grain = "weekly"
+            grain = "week"
         elif "quarter" in d:
-            grain = "quarterly"
+            grain = "quarter"
         elif "year" in d:
-            grain = "yearly"
+            grain = "year"
         elif "date" in d or "day" in d:
-            grain = "daily"
-    
+            grain = "day"
+    elif "DATE_TRUNC('MONTH'" in sql.upper() or "DATE_TRUNC('MONTH'" in sql.upper() or "YYYY-MM" in sql:
+        grain = "month"
+
     # Limit
     lim_m = re.search(r'\bLIMIT\s+(\d+)', sql, re.IGNORECASE)
     limit_val = int(lim_m.group(1)) if lim_m else None
-    
+
+    # Ranking / Ordering direction
+    order_dir = None
+    if "ORDER BY" in sql.upper():
+        if "DESC" in sql.upper().split("ORDER BY")[-1]:
+            order_dir = "DESC"
+        else:
+            order_dir = "ASC"
+
     return AnalyticalIntent(
         metrics=metrics,
         aggregations=agg_types,
+        metric_aggregations=metric_aggs,
+        multiple_metrics=len(metrics) > 1,
         dimensions=dimensions,
         filters=filters,
-        time_range=time_range,
-        grain=grain,
+        date_range=date_range_tuple,
+        temporal_grain=grain,
+        sort_direction=order_dir,
+        ranking_direction=order_dir,
         limit=limit_val,
         intent_summary=intent_summary,
         can_answer=True,
@@ -657,11 +716,10 @@ def _validate_sql_against_schema(sql: str, catalog) -> Optional[str]:
 
     # Extract all double-quoted identifiers from SQL
     quoted_ids = re.findall(r'"([A-Za-z0-9_]+)"', sql)
-    
+
     for ident in quoted_ids:
         u = ident.upper()
         # Skip database/schema names (they appear in three-part refs and are not in catalog cols)
-        # Heuristic: if it's used in a three-part ref pattern "db"."schema"."table", only check the table
         if u not in allowed_all:
             # Check if it could be a database or schema name
             is_db_or_schema = any(
@@ -688,28 +746,66 @@ def _validate_intent_against_sql(intent: AnalyticalIntent, sql: str) -> Optional
 
     sql_upper = sql.upper()
 
-    # If intent resolved specific metrics, at least one must appear in SELECT
+    # 1. Metrics validation
     if intent.metrics:
-        found_any_metric = any(f'"{m}"' in sql.upper() or m in sql.upper() for m in intent.metrics)
-        if not found_any_metric:
-            return (
-                f"Intent specifies metrics {intent.metrics} but none appear in the generated SQL. "
-                f"Intent↔SQL mismatch."
-            )
+        for m in intent.metrics:
+            if f'"{m.upper()}"' not in sql_upper and m.upper() not in sql_upper:
+                return (
+                    f"Intent specifies metric '{m}' but it does not appear in the generated SQL. "
+                    f"Intent↔SQL mismatch."
+                )
 
-    # If intent has dimensions (GROUP BY), SQL must have GROUP BY
+    # 2. Metric aggregations validation
+    if intent.metric_aggregations:
+        for col, agg in intent.metric_aggregations.items():
+            if agg == "AVG":
+                if f"AVG(" not in sql_upper:
+                    return f"Intent requested AVG for '{col}', but generated SQL does not use AVG aggregation."
+            elif agg == "SUM":
+                if f"SUM(" not in sql_upper:
+                    return f"Intent requested SUM for '{col}', but generated SQL does not use SUM aggregation."
+            elif agg == "MIN":
+                if f"MIN(" not in sql_upper:
+                    return f"Intent requested MIN for '{col}', but generated SQL does not use MIN aggregation."
+            elif agg == "MAX":
+                if f"MAX(" not in sql_upper:
+                    return f"Intent requested MAX for '{col}', but generated SQL does not use MAX aggregation."
+
+    # 3. Dimensions & Scalar Aggregates validation
     if intent.dimensions and "GROUP BY" not in sql_upper:
         return (
             f"Intent specifies dimensions {intent.dimensions} implying GROUP BY, "
             f"but generated SQL has no GROUP BY clause. Intent↔SQL mismatch."
         )
 
-    # If intent has a time_range, SQL must have a WHERE clause
-    if intent.time_range and "WHERE" not in sql_upper:
-        return (
-            f"Intent specifies time range '{intent.time_range}' but generated SQL has no WHERE clause. "
-            f"Intent↔SQL mismatch."
+    # 4. Temporal Grain validation
+    if intent.temporal_grain == "month":
+        # Must group by month column or date truncation/formatting
+        has_month_grain = (
+            any("MONTH" in dim.upper() for dim in intent.dimensions) or
+            "DATE_TRUNC('MONTH'" in sql_upper or
+            "DATE_TRUNC(\"MONTH\"" in sql_upper or
+            "TO_CHAR(" in sql_upper or
+            "EXTRACT(MONTH" in sql_upper or
+            "DATE_PART('MONTH'" in sql_upper
         )
+        if not has_month_grain and "GROUP BY" in sql_upper:
+            # Check if it erroneously grouped by raw date without month extraction
+            if any(k in sql_upper for k in ("_DATE\"", "DATE\"")):
+                return "Monthly trend intent must group by month grain (e.g. DATE_TRUNC('month', ...) or MONTH column), not raw date."
+
+    # 5. Date Range filter validation
+    if intent.date_range:
+        s, e = intent.date_range
+        if "WHERE" not in sql_upper:
+            return f"Intent specifies date range {s} to {e} but generated SQL has no WHERE clause."
+        if s not in sql or e not in sql:
+            return f"Intent specifies date range {s} to {e} but the dates are missing from the SQL WHERE clause."
+
+    # 6. Ranking Direction validation
+    if intent.ranking_direction == "ASC":
+        if "ORDER BY" in sql_upper and "DESC" in sql_upper.split("ORDER BY")[-1]:
+            return "Bottom-N / Lowest ranking intent must use ASC order, not DESC."
 
     return None
 

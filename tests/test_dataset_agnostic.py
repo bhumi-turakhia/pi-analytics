@@ -387,5 +387,89 @@ class LivePathValidationTests(unittest.TestCase):
         self.assertEqual(mock_client.models.generate_content.call_count, 1, "Valid query needs 0 regenerations")
 
 
+class AnalyticalIntentCorrectnessTests(unittest.TestCase):
+    """
+    Tests covering all known correctness failure classes:
+    - Scalar aggregate unnecessarily grouped
+    - Monthly request grouped by raw date
+    - Multiple metrics reduced to one metric
+    - Bottom-N used descending order
+    - Requested date filter omitted
+    - Average request generated SUM
+    """
+
+    def test_scalar_avg_request_generates_avg_not_sum(self):
+        """Average request must generate AVG aggregation, not SUM."""
+        sql, _ = generate_catalog_grounded_sql(
+            "What is the average length of stay in days?", HEALTHCARE
+        )
+        self.assertIn("AVG", sql.upper(), f"Expected AVG in SQL: {sql}")
+        self.assertNotIn("SUM", sql.upper(), f"Should not use SUM for average: {sql}")
+        self.assertIn('"LOS_DAYS"', sql)
+        self.assertNotIn("GROUP BY", sql.upper(), "Scalar aggregate must not have GROUP BY")
+
+    def test_bottom_n_uses_ascending_order(self):
+        """Bottom N / lowest N request must generate ASC order, not DESC."""
+        sql, _ = generate_catalog_grounded_sql(
+            "Show bottom 5 departments by total billed amount", HEALTHCARE
+        )
+        self.assertIn("ASC", sql.upper(), f"Bottom 5 must sort ASC: {sql}")
+        self.assertNotIn("DESC", sql.upper(), f"Bottom 5 must not sort DESC: {sql}")
+        self.assertIn("LIMIT 5", sql.upper(), f"Expected LIMIT 5: {sql}")
+
+    def test_intent_validator_rejects_bottom_n_with_desc(self):
+        """Intent specifies ASC ranking -> SQL with DESC must be rejected by validator."""
+        intent = AnalyticalIntent(
+            metrics=["BILLED_AMOUNT"],
+            aggregations=["SUM"],
+            dimensions=["DEPARTMENT"],
+            ranking_direction="ASC",
+            limit=5,
+            can_answer=True,
+        )
+        bad_sql = 'SELECT "DEPARTMENT", SUM("BILLED_AMOUNT") AS "TOTAL" FROM "HEALTH_DW"."CLINICAL"."ENCOUNTERS" GROUP BY "DEPARTMENT" ORDER BY "TOTAL" DESC LIMIT 5;'
+        err = _validate_intent_against_sql(intent, bad_sql)
+        self.assertIsNotNone(err, "Validator must reject DESC for ASC ranking intent")
+        self.assertIn("ASC", err)
+
+    def test_intent_validator_rejects_wrong_aggregation(self):
+        """Intent specifies AVG -> SQL with SUM must be rejected by validator."""
+        intent = AnalyticalIntent(
+            metrics=["LOS_DAYS"],
+            aggregations=["AVG"],
+            metric_aggregations={"LOS_DAYS": "AVG"},
+            can_answer=True,
+        )
+        bad_sql = 'SELECT SUM("LOS_DAYS") AS "TOTAL_LOS_DAYS" FROM "HEALTH_DW"."CLINICAL"."ENCOUNTERS";'
+        err = _validate_intent_against_sql(intent, bad_sql)
+        self.assertIsNotNone(err, "Validator must reject SUM when AVG is requested")
+        self.assertIn("AVG", err)
+
+    def test_intent_validator_rejects_missing_date_range(self):
+        """Intent specifies date range -> SQL missing WHERE/dates must be rejected."""
+        intent = AnalyticalIntent(
+            metrics=["BILLED_AMOUNT"],
+            aggregations=["SUM"],
+            date_range=("2024-01-01", "2024-03-31"),
+            can_answer=True,
+        )
+        bad_sql = 'SELECT SUM("BILLED_AMOUNT") AS "TOTAL" FROM "HEALTH_DW"."CLINICAL"."ENCOUNTERS";'
+        err = _validate_intent_against_sql(intent, bad_sql)
+        self.assertIsNotNone(err, "Validator must reject SQL omitting requested date range")
+
+    def test_intent_validator_rejects_monthly_trend_grouped_by_raw_date(self):
+        """Monthly trend intent grouped by raw daily date must be rejected."""
+        intent = AnalyticalIntent(
+            metrics=["BILLED_AMOUNT"],
+            aggregations=["SUM"],
+            dimensions=["ADMISSION_DATE"],
+            temporal_grain="month",
+            can_answer=True,
+        )
+        bad_sql = 'SELECT "ADMISSION_DATE", SUM("BILLED_AMOUNT") FROM "HEALTH_DW"."CLINICAL"."ENCOUNTERS" GROUP BY "ADMISSION_DATE";'
+        err = _validate_intent_against_sql(intent, bad_sql)
+        self.assertIsNotNone(err, "Validator must reject raw date grouping for monthly grain")
+
+
 if __name__ == "__main__":
     unittest.main()

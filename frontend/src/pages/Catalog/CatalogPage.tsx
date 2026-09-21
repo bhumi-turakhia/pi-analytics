@@ -318,7 +318,7 @@ export const CatalogPage: React.FC<{
                 <div className="p-3 text-center space-y-2">
                   <AlertCircle className="w-5 h-5 mx-auto text-rose-500" />
                   <p className="text-[11px] text-rose-600 font-medium">{loadError}</p>
-                  <Button size="xs" variant="outline" onClick={() => loadHierarchy(false)}>
+                  <Button size="sm" variant="outline" onClick={() => loadHierarchy(false)}>
                     Retry
                   </Button>
                 </div>

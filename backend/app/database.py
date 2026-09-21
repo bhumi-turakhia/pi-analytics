@@ -9,9 +9,9 @@ if not os.getenv("DATABASE_URL"):
     if os.path.exists(env_backend):
         load_dotenv(env_backend)
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./pi_analytics.db"
 
-print("DATABASE_URL loaded:", DATABASE_URL is not None)
+print("DATABASE_URL loaded:", os.getenv("DATABASE_URL") is not None, "Using:", DATABASE_URL)
 
 engine = create_engine(DATABASE_URL)
 
@@ -104,6 +104,57 @@ def init_db_schema():
                         height INTEGER DEFAULT 4,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS audit_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        actor VARCHAR(255) DEFAULT 'analyst',
+                        action_type VARCHAR(100) NOT NULL,
+                        question TEXT,
+                        generated_sql TEXT,
+                        status VARCHAR(50) NOT NULL DEFAULT 'success',
+                        rows_returned INTEGER DEFAULT 0,
+                        execution_time_ms INTEGER DEFAULT 0,
+                        visualization_type VARCHAR(50),
+                        source_id INTEGER REFERENCES data_sources(id) ON DELETE SET NULL,
+                        dashboard_id INTEGER REFERENCES dashboards(id) ON DELETE SET NULL,
+                        widget_id INTEGER,
+                        export_type VARCHAR(50),
+                        error_message TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS semantic_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_id INTEGER REFERENCES data_sources(id) ON DELETE CASCADE,
+                        name VARCHAR(255) NOT NULL,
+                        label VARCHAR(255),
+                        description TEXT,
+                        source_table VARCHAR(255),
+                        source_column VARCHAR(255),
+                        aggregation VARCHAR(50) DEFAULT 'SUM',
+                        format_hint VARCHAR(50) DEFAULT 'number',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT uq_semantic_metrics_source_name UNIQUE (source_id, name)
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS semantic_dimensions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_id INTEGER REFERENCES data_sources(id) ON DELETE CASCADE,
+                        name VARCHAR(255) NOT NULL,
+                        label VARCHAR(255),
+                        description TEXT,
+                        source_table VARCHAR(255),
+                        source_column VARCHAR(255),
+                        data_type VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT uq_semantic_dimensions_source_name UNIQUE (source_id, name)
                     );
                 """))
             else:

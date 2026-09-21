@@ -311,7 +311,7 @@ export const ExplorerPage: React.FC<ExplorerPageProps> = ({ onNavigate, initialC
             {sources.length > 0 ? (
               sources.map((s) => (
                 <option key={s.id} value={String(s.id)}>
-                  {s.name} ({s.source_type || 'Snowflake'})
+                  {s.name} ({s.platform || (s as any).source_type || 'Snowflake'})
                 </option>
               ))
             ) : (

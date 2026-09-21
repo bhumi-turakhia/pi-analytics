@@ -425,7 +425,7 @@ export const AICopilotCard: React.FC<AICopilotCardProps> = ({
                   {msg.content.toLowerCase().includes('credential') && !credentials.password && (
                     <div className="pt-2">
                       <Button
-                        size="xs"
+                        size="sm"
                         variant="primary"
                         onClick={() => setIsCredentialsModalOpen(true)}
                         leftIcon={<Key className="w-3 h-3" />}

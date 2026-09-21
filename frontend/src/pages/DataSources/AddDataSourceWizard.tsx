@@ -119,9 +119,9 @@ export const AddDataSourceWizard: React.FC<AddDataSourceWizardProps> = ({
         return;
       }
     } else if (step === 2) {
-      if (!formData.name.trim()) newErrors.name = 'Connection name is required';
-      if (!formData.accountIdentifier.trim()) newErrors.accountIdentifier = 'Instance identifier is required';
-      if (!formData.username.trim()) newErrors.username = 'Service username is required';
+      if (!formData.name?.trim()) newErrors.name = 'Connection name is required';
+      if (!formData.accountIdentifier?.trim()) newErrors.accountIdentifier = 'Instance identifier is required';
+      if (!formData.username?.trim()) newErrors.username = 'Service username is required';
 
       if (Object.keys(newErrors).length > 0) {
         setErrors(newErrors);

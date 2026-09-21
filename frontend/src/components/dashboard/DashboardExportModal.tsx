@@ -154,7 +154,7 @@ export const DashboardExportModal: React.FC<DashboardExportModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Export &amp; Save Dashboard"
-      size="lg"
+      maxWidth="lg"
     >
       <div className="space-y-5 p-1">
         {/* Intro */}
