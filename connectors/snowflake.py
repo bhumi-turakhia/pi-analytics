@@ -1,3 +1,4 @@
+import os
 import time
 import re
 import datetime
@@ -104,17 +105,25 @@ class SnowflakeConnector:
             config.get("account")
             or config.get("account_identifier")
             or config.get("accountIdentifier")
+            or os.environ.get("SNOWFLAKE_ACCOUNT")
+            or os.environ.get("SNOWFLAKE_ACCOUNT_IDENTIFIER")
         )
-        user = config.get("user") or config.get("username")
-        password = config.get("password")
-        warehouse = config.get("warehouse")
-        database = config.get("database")
+        user = (
+            config.get("user")
+            or config.get("username")
+            or os.environ.get("SNOWFLAKE_USER")
+            or os.environ.get("SNOWFLAKE_USERNAME")
+        )
+        password = config.get("password") or os.environ.get("SNOWFLAKE_PASSWORD")
+        warehouse = config.get("warehouse") or os.environ.get("SNOWFLAKE_WAREHOUSE")
+        database = config.get("database") or os.environ.get("SNOWFLAKE_DATABASE")
         schema = (
             config.get("schema")
             or config.get("default_schema")
             or config.get("defaultSchema")
+            or os.environ.get("SNOWFLAKE_SCHEMA")
         )
-        role = config.get("role")
+        role = config.get("role") or os.environ.get("SNOWFLAKE_ROLE")
 
         # Validate mandatory credentials
         missing = []
@@ -448,17 +457,25 @@ class SnowflakeConnector:
             config.get("account")
             or config.get("account_identifier")
             or config.get("accountIdentifier")
+            or os.environ.get("SNOWFLAKE_ACCOUNT")
+            or os.environ.get("SNOWFLAKE_ACCOUNT_IDENTIFIER")
         )
-        user = config.get("user") or config.get("username")
-        password = config.get("password")
-        warehouse = config.get("warehouse")
-        database = config.get("database")
+        user = (
+            config.get("user")
+            or config.get("username")
+            or os.environ.get("SNOWFLAKE_USER")
+            or os.environ.get("SNOWFLAKE_USERNAME")
+        )
+        password = config.get("password") or os.environ.get("SNOWFLAKE_PASSWORD")
+        warehouse = config.get("warehouse") or os.environ.get("SNOWFLAKE_WAREHOUSE")
+        database = config.get("database") or os.environ.get("SNOWFLAKE_DATABASE")
         schema = (
             config.get("schema")
             or config.get("default_schema")
             or config.get("defaultSchema")
+            or os.environ.get("SNOWFLAKE_SCHEMA")
         )
-        role = config.get("role")
+        role = config.get("role") or os.environ.get("SNOWFLAKE_ROLE")
 
         missing = []
         if not account or not str(account).strip():

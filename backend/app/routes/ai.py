@@ -1,5 +1,6 @@
 """
-Step 10 – AI Analytics Copilot endpoint.
+[DEPRECATED] Legacy AI Analytics Copilot simulation endpoint.
+Canonical production endpoint is /api/copilot/query in app.routes.copilot.
 
 POST /api/ai/copilot
     Accepts a natural-language prompt + dashboard context, grounds the
