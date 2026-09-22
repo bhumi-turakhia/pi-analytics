@@ -279,8 +279,6 @@ export const DynamicDashboardPage: React.FC<DynamicDashboardPageProps> = ({
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           content: res.answer,
           sqlQuery: res.sql,
-          sqlExecuted: res.sql_executed ?? true,
-          notExecutedReason: res.not_executed_reason || undefined,
           visualization: res.visualization,
           columns: res.columns,
           rows: res.rows,
@@ -302,8 +300,6 @@ export const DynamicDashboardPage: React.FC<DynamicDashboardPageProps> = ({
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           content: res.answer || res.error || 'Query execution could not be completed.',
           sqlQuery: res.sql || undefined,
-          sqlExecuted: res.sql_executed ?? false,
-          notExecutedReason: res.not_executed_reason || (res.error ? 'Query was not executed on the connected database.' : undefined),
         };
         setMessages((prev) => [...prev, errorMsg]);
         showToast('error', 'Query Failed', res.error || 'Unable to execute query.');

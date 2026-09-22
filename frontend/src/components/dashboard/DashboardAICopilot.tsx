@@ -11,7 +11,6 @@ import {
   Plus,
   ChevronDown,
   ChevronUp,
-  Info,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { PiByThreeIcon } from '../brand/Logo';
@@ -188,21 +187,10 @@ export const DashboardAICopilot: React.FC<DashboardAICopilotProps> = ({
                   <div className="flex items-center justify-between text-[10px] text-neutral-700 font-mono-code font-semibold">
                     <button
                       onClick={() => toggleSql(msg.id)}
-                      className="flex items-center gap-1.5 hover:text-black font-bold cursor-pointer"
+                      className="flex items-center gap-1 hover:text-black font-bold cursor-pointer"
                     >
                       <Code2 className="w-3 h-3 text-black" />
                       <span>{expandedSqlIds[msg.id] ? 'Hide SQL' : 'View SQL'}</span>
-                      {msg.sqlExecuted ? (
-                        <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-sans font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
-                          <Check className="w-2.5 h-2.5 text-emerald-600" />
-                          Executed
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-sans font-semibold bg-amber-100 text-amber-900 border border-amber-200">
-                          <Info className="w-2.5 h-2.5 text-amber-700" />
-                          Not executed
-                        </span>
-                      )}
                       {expandedSqlIds[msg.id] ? (
                         <ChevronUp className="w-3 h-3" />
                       ) : (
@@ -222,16 +210,6 @@ export const DashboardAICopilot: React.FC<DashboardAICopilotProps> = ({
                       <span>{copiedSqlId === msg.id ? 'Copied' : 'Copy'}</span>
                     </button>
                   </div>
-
-                  {!msg.sqlExecuted && (
-                    <div className="text-[10px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1 font-sans leading-relaxed">
-                      <span className="font-semibold">Execution Status: </span>
-                      <span>Not executed</span>
-                      {msg.notExecutedReason && (
-                        <div className="text-neutral-700 mt-0.5">{msg.notExecutedReason}</div>
-                      )}
-                    </div>
-                  )}
 
                   {expandedSqlIds[msg.id] && (
                     <pre className="p-2.5 bg-neutral-900 text-neutral-100 rounded-md text-[10.5px] font-mono-code overflow-x-auto whitespace-pre leading-snug shadow-inner">

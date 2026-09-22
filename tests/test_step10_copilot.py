@@ -243,8 +243,7 @@ class Step10CopilotAndDashboardTests(unittest.TestCase):
         res = copilot_query(req)
 
         self.assertFalse(res.success)
-        self.assertFalse(res.sql_executed)
-        self.assertIn("error occurred while executing", res.answer)
+        self.assertIn("Snowflake error", res.answer)
         self.assertEqual(len(res.rows), 0)
 
     # 11. Empty results handling (says no data, doesn't invent numbers)

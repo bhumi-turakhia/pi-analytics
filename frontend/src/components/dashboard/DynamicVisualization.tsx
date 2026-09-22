@@ -38,8 +38,6 @@ export const DynamicVisualization: React.FC<DynamicVisualizationProps> = ({
       displayVal = String(rawVal);
     }
 
-    const isNullOrZero = rawVal === null || rawVal === undefined || Number(rawVal) === 0 || displayVal === '0' || displayVal === 'NULL' || displayVal === 'null';
-
     return (
       <div className={`p-5 bg-white rounded-lg border border-neutral-200 shadow-xs ${className}`}>
         <div className="flex items-center justify-between mb-2">
@@ -53,16 +51,10 @@ export const DynamicVisualization: React.FC<DynamicVisualizationProps> = ({
         <div className="text-2xl lg:text-3xl font-bold text-black font-sans tracking-tight">
           {displayVal}
         </div>
-        {!isNullOrZero ? (
-          <div className="mt-2 flex items-center gap-1 text-[11px] text-emerald-800 font-medium">
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Verified real warehouse aggregate</span>
-          </div>
-        ) : (
-          <div className="mt-2 flex items-center gap-1 text-[11px] text-neutral-500 font-medium">
-            <span>No data returned for metric</span>
-          </div>
-        )}
+        <div className="mt-2 flex items-center gap-1 text-[11px] text-emerald-800 font-medium">
+          <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Verified real warehouse aggregate</span>
+        </div>
       </div>
     );
   }

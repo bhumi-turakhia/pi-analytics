@@ -137,8 +137,6 @@ export const AICopilotCard: React.FC<AICopilotCardProps> = ({
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           content: res.answer,
           sqlQuery: res.sql || undefined,
-          sqlExecuted: res.sql_executed ?? true,
-          notExecutedReason: res.not_executed_reason || undefined,
           visualization: res.visualization || undefined,
           columns: res.columns || [],
           rows: res.rows || [],
@@ -168,12 +166,7 @@ export const AICopilotCard: React.FC<AICopilotCardProps> = ({
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           content: res.answer || res.error || 'Query execution could not be completed.',
           sqlQuery: res.sql || undefined,
-          sqlExecuted: res.sql_executed ?? false,
-          notExecutedReason: res.not_executed_reason || (res.error ? 'Query was not executed on the connected database.' : undefined),
         };
-        if (res.sql) {
-          setExpandedSqlIds((prev) => ({ ...prev, [errorMsg.id]: true }));
-        }
         setMessages((prev) => [...prev, errorMsg]);
 
         if (isAuthError) {
@@ -390,25 +383,14 @@ export const AICopilotCard: React.FC<AICopilotCardProps> = ({
                         <button
                           type="button"
                           onClick={() => toggleSql(msg.id)}
-                          className="flex items-center gap-1.5 hover:underline cursor-pointer"
+                          className="flex items-center gap-1 hover:underline cursor-pointer"
                         >
                           <Code2 className="w-3.5 h-3.5 text-black" />
                           <span>Generated SQL Query</span>
-                          {msg.sqlExecuted ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
-                              <Check className="w-3 h-3 text-emerald-600" />
-                              Executed on Snowflake
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-sans font-semibold bg-amber-100 text-amber-900 border border-amber-200">
-                              <Info className="w-3 h-3 text-amber-700" />
-                              Not executed
-                            </span>
-                          )}
                           {expandedSqlIds[msg.id] ? (
-                            <ChevronUp className="w-3 h-3 text-neutral-500 ml-1" />
+                            <ChevronUp className="w-3 h-3 text-neutral-500" />
                           ) : (
-                            <ChevronDown className="w-3 h-3 text-neutral-500 ml-1" />
+                            <ChevronDown className="w-3 h-3 text-neutral-500" />
                           )}
                         </button>
 
@@ -430,20 +412,6 @@ export const AICopilotCard: React.FC<AICopilotCardProps> = ({
                           )}
                         </button>
                       </div>
-
-                      {!msg.sqlExecuted && (
-                        <div className="text-[11px] text-amber-900 bg-amber-50/90 border border-amber-200 rounded px-2.5 py-1.5 font-sans leading-relaxed space-y-0.5">
-                          <div className="font-semibold flex items-center gap-1">
-                            <Info className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                            <span>Execution Status: Not executed</span>
-                          </div>
-                          {msg.notExecutedReason && (
-                            <div className="text-neutral-700 pl-4">
-                              {msg.notExecutedReason}
-                            </div>
-                          )}
-                        </div>
-                      )}
 
                       {expandedSqlIds[msg.id] && (
                         <pre className="p-3 bg-neutral-900 text-neutral-100 rounded-md text-[11px] font-mono-code overflow-x-auto whitespace-pre leading-relaxed shadow-inner">

@@ -36,8 +36,6 @@ export interface CopilotQueryResponse {
   success: boolean;
   answer: string;
   sql?: string;
-  sql_executed?: boolean;
-  not_executed_reason?: string | null;
   columns: ColumnMeta[];
   rows: Record<string, any>[];
   row_count: number;

@@ -11,13 +11,6 @@ from sqlalchemy import text
 from app.database import engine
 from app.routes.query import validate_read_only_query, ColumnResponse
 from connectors import execute_source_query
-from app.services.copilot import (
-    resolve_analytical_intent,
-    compile_intent_to_sql,
-    validate_sql_against_intent,
-    verify_and_ground_answer,
-    AnalyticalIntent,
-)
 
 router = APIRouter(
     prefix="/api/copilot",
@@ -56,8 +49,6 @@ class CopilotQueryResponse(BaseModel):
     success: bool
     answer: str
     sql: Optional[str] = None
-    sql_executed: bool = False
-    not_executed_reason: Optional[str] = None
     columns: List[ColumnResponse] = []
     rows: List[Dict[str, Any]] = []
     row_count: int = 0
@@ -1055,23 +1046,15 @@ Do NOT include SQL, formatting, markdown, or preamble — just the answer.
 """
     try:
         client = genai.Client(api_key=api_key)
-        for model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash"):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config={
-                        "temperature": 0.0,
-                        "max_output_tokens": 256,
-                    },
-                )
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as me:
-                if "429" in str(me) or "quota" in str(me).lower() or "resource_exhausted" in str(me).lower():
-                    continue
-                return None
-        return None
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config={
+                "temperature": 0.0,
+                "max_output_tokens": 256,
+            },
+        )
+        return response.text.strip()
     except Exception:
         return None
 
@@ -1289,97 +1272,47 @@ def copilot_query(payload: CopilotQueryRequest):
     # 5. Fetch semantic context (P0-2) — enriches Gemini SQL generation
     semantic_context = get_semantic_context_for_prompt(payload.source_id)
 
-    # 6. Resolve analytical intent via modular catalog-grounded resolver
-    intent, resolver_path, debug_trace = resolve_analytical_intent(payload.question, catalog, semantic_context, return_debug=True)
-    print(f"[COPILOT SERVER LOG] question='{payload.question}' resolver_path='{resolver_path}' intent_type='{intent.intent_type}' dataset='{intent.dataset}'")
+    # 6. Generate catalog-grounded SQL
+    # Try Gemini first if configured (SECURITY: no credentials sent to Gemini)
+    gemini_res = call_gemini_for_sql(payload.question, catalog, semantic_context)
+    if gemini_res:
+        generated_sql, viz_intent, explanation = gemini_res
+        if not generated_sql:
+            _log_audit(
+                action_type="copilot_query",
+                status="failure",
+                question=payload.question,
+                source_id=payload.source_id,
+                error_message="Question cannot be answered from catalog",
+            )
+            return CopilotQueryResponse(
+                success=False,
+                answer=explanation or "I can't answer that from the connected analytics data as the relevant data is not in the catalog.",
+                error="Question cannot be answered from catalog.",
+            )
+    else:
+        try:
+            generated_sql, viz_intent = generate_catalog_grounded_sql(
+                payload.question,
+                catalog,
+                limit=payload.limit or 100
+            )
+            explanation = f"Generated analytical query for: {payload.question}"
+        except Exception as e:
+            _log_audit(
+                action_type="copilot_query",
+                status="failure",
+                question=payload.question,
+                source_id=payload.source_id,
+                error_message=str(e),
+            )
+            return CopilotQueryResponse(
+                success=False,
+                answer=f"Could not generate query for this question: {str(e)}",
+                error=str(e),
+            )
 
-    if intent.intent_type == "unsupported":
-        err_msg = intent.unsupported_reason or "I can't answer that from the connected analytics data as the relevant data is not in the catalog."
-        _log_audit(
-            action_type="copilot_query",
-            status="failure",
-            question=payload.question,
-            source_id=payload.source_id,
-            error_message="Question unsupported by catalog",
-        )
-        return CopilotQueryResponse(
-            success=False,
-            answer=err_msg,
-            sql=None,
-            sql_executed=False,
-            not_executed_reason="Question cannot be answered from the active data catalog.",
-            error="Question cannot be answered from catalog.",
-        )
-
-    if intent.intent_type == "clarification" or intent.needs_clarification:
-        clarif_msg = intent.clarification_question or "Please clarify which metric or dimension you would like to analyze."
-        _log_audit(
-            action_type="copilot_query",
-            status="clarification_needed",
-            question=payload.question,
-            source_id=payload.source_id,
-            error_message="Clarification requested",
-        )
-        return CopilotQueryResponse(
-            success=False,
-            answer=clarif_msg,
-            sql=None,
-            sql_executed=False,
-            not_executed_reason="Clarification requested before query execution.",
-            error="Clarification required.",
-        )
-
-    # 7. Compile deterministic SQL from intent and validate via AST
-    try:
-        generated_sql = compile_intent_to_sql(intent)
-    except Exception as e:
-        _log_audit(
-            action_type="copilot_query",
-            status="failure",
-            question=payload.question,
-            source_id=payload.source_id,
-            error_message=str(e),
-        )
-        return CopilotQueryResponse(
-            success=False,
-            answer="Could not build a query for this question from the available data catalog.",
-            sql=None,
-            sql_executed=False,
-            not_executed_reason="SQL compilation failed.",
-            error="Query compilation error.",
-        )
-
-    val_err = validate_sql_against_intent(intent, generated_sql)
-    if val_err:
-        _log_audit(
-            action_type="copilot_query",
-            status="failure",
-            question=payload.question,
-            generated_sql=generated_sql,
-            source_id=payload.source_id,
-            error_message=f"Intent validation failed: {val_err}",
-        )
-        return CopilotQueryResponse(
-            success=False,
-            answer="The generated query could not be validated against the analytical intent and was not executed.",
-            sql=generated_sql,
-            sql_executed=False,
-            not_executed_reason="The query failed intent validation and was not sent to the database.",
-            error="Intent validation failed.",
-        )
-
-    # Prepare visualization intent from resolved analytical intent
-    viz_type = "line" if intent.intent_type == "timeseries" else ("kpi" if intent.intent_type == "scalar" else "bar")
-    primary_metric = intent.metrics[0].alias if intent.metrics else "Value"
-    primary_dim = intent.dimensions[0] if intent.dimensions else None
-    viz_intent = {
-        "type": viz_type,
-        "title": f"{primary_metric} by {primary_dim}" if primary_dim else primary_metric,
-        "xField": primary_dim,
-        "yField": primary_metric,
-    }
-
-    # Safety validation: reuse Step 9 read-only safety pipeline
+    # 7. Safety validation: reuse Step 9 read-only safety pipeline
     try:
         validate_read_only_query(generated_sql, max_limit=1000)
     except HTTPException as h_err:
@@ -1393,31 +1326,9 @@ def copilot_query(payload: CopilotQueryRequest):
         )
         return CopilotQueryResponse(
             success=False,
-            answer="The generated query violated security policies (only read-only SELECT queries are allowed) and was not executed.",
+            answer=f"SQL safety violation: {h_err.detail}",
             sql=generated_sql,
-            sql_executed=False,
-            not_executed_reason="Blocked by read-only security safety checks.",
             error=h_err.detail,
-        )
-
-    # Validate SQL AST & column existence against catalog before execution
-    val_err = validate_sql_against_intent(intent, generated_sql, catalog)
-    if val_err:
-        _log_audit(
-            action_type="copilot_query",
-            status="failure",
-            question=payload.question,
-            generated_sql=generated_sql,
-            source_id=payload.source_id,
-            error_message=f"SQL AST validation failed: {val_err}",
-        )
-        return CopilotQueryResponse(
-            success=False,
-            answer="The generated query could not be validated against the active data catalog schema and was not executed.",
-            sql=generated_sql,
-            sql_executed=False,
-            not_executed_reason="Schema validation against the data catalog failed.",
-            error="Schema validation error.",
         )
 
     # 8. Execute query via Step 9 execution pipeline
@@ -1447,8 +1358,7 @@ def copilot_query(payload: CopilotQueryRequest):
     exec_time = result.execution_time_ms or int((time.monotonic() - t0) * 1000)
 
     if not result.success:
-        raw_err = result.error or result.message or "Query execution failed."
-        friendly_err = "An error occurred while executing the query on the database. Please verify your query or data connection."
+        error_msg = result.error or result.message or "Query execution failed."
         _log_audit(
             action_type="copilot_query",
             status="failure",
@@ -1456,15 +1366,13 @@ def copilot_query(payload: CopilotQueryRequest):
             generated_sql=generated_sql,
             execution_time_ms=exec_time,
             source_id=payload.source_id,
-            error_message=raw_err,
+            error_message=error_msg,
         )
         return CopilotQueryResponse(
             success=False,
-            answer=f"{intent.interpretation_statement}\n\n{friendly_err}",
+            answer=f"Query execution failed: {error_msg}",
             sql=generated_sql,
-            sql_executed=False,
-            not_executed_reason="Database execution error on Snowflake.",
-            error="Database execution error",
+            error=error_msg,
             execution_time_ms=exec_time,
         )
 
@@ -1484,10 +1392,8 @@ def copilot_query(payload: CopilotQueryRequest):
         )
         return CopilotQueryResponse(
             success=True,
-            answer="The query executed successfully on Snowflake, but returned no rows. The connected data source may not contain matching records for this question.",
+            answer="The query executed successfully, but returned no rows. The connected data source may not contain matching records for this question.",
             sql=generated_sql,
-            sql_executed=True,
-            not_executed_reason=None,
             columns=col_responses,
             rows=[],
             row_count=0,
@@ -1510,20 +1416,27 @@ def copilot_query(payload: CopilotQueryRequest):
 
     # 11. P0-1: Generate final natural-language answer strictly grounded in real data
     # Try Gemini-generated answer first (grounded in actual rows, no credentials)
-    candidate_answer = call_gemini_for_final_answer(
+    final_answer = call_gemini_for_final_answer(
         question=payload.question,
         sql=generated_sql,
         columns=col_responses,
         rows=result.rows,
     )
 
-    final_answer = verify_and_ground_answer(
-        candidate_answer=candidate_answer,
-        rows=result.rows,
-        columns=[c.name for c in col_responses],
-        interpretation_statement=intent.interpretation_statement,
-        question=payload.question,
-    )
+    # Fallback to deterministic answer if Gemini is unavailable
+    if not final_answer:
+        if viz_spec.type == "kpi" and viz_spec.value is not None:
+            try:
+                val_formatted = f"{float(viz_spec.value):,.2f}" if isinstance(viz_spec.value, (int, float)) else str(viz_spec.value)
+            except Exception:
+                val_formatted = str(viz_spec.value)
+            final_answer = f"The actual {viz_spec.title.lower()} is {val_formatted}."
+        elif len(result.rows) == 1:
+            # Summarize single-row result
+            row_summary = ", ".join(f"{k}: {v}" for k, v in result.rows[0].items())
+            final_answer = f"Result: {row_summary}"
+        else:
+            final_answer = f"{viz_spec.title}: {len(result.rows)} rows returned from connected warehouse."
 
     # 12. Log real audit event (P0-4) — SECURITY: credentials not logged
     _log_audit(
@@ -1541,8 +1454,6 @@ def copilot_query(payload: CopilotQueryRequest):
         success=True,
         answer=final_answer,
         sql=generated_sql,
-        sql_executed=True,
-        not_executed_reason=None,
         columns=col_responses,
         rows=result.rows,
         row_count=result.row_count,

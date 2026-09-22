@@ -47,4 +47,3 @@ urllib3==2.7.0
 uvicorn==0.52.4
 watchfiles==1.2.0
 websockets==17.0.1
-sqlglot>=30.0.0

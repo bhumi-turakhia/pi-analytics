@@ -183,8 +183,6 @@ export interface ChatMessage {
   timestamp: string;
   content: string;
   sqlQuery?: string;
-  sqlExecuted?: boolean;
-  notExecutedReason?: string;
   appliedChanges?: string[];
   suggestedFollowUps?: string[];
   visualization?: any;
