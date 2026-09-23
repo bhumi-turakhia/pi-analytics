@@ -1,0 +1,26 @@
+﻿table DashboardRecords
+
+    column record_id
+        dataType: string
+        summarizeBy: none
+        sourceColumn: record_id
+
+    column record_name
+        dataType: string
+        summarizeBy: none
+        sourceColumn: record_name
+
+    column region
+        dataType: string
+        summarizeBy: none
+        sourceColumn: region
+
+    column metric_value
+        dataType: double
+        summarizeBy: sum
+        sourceColumn: metric_value
+
+    column created_date
+        dataType: dateTime
+        summarizeBy: none
+        sourceColumn: created_date

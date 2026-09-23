@@ -1,0 +1,545 @@
+﻿import os
+import re
+import time
+from typing import Dict, Any, Optional, List, Tuple
+from urllib.parse import quote
+
+import requests
+
+from connectors.base import (
+    ConnectionTestResult,
+    ColumnMetadata,
+    TableMetadata,
+    MetadataDiscoveryResult,
+    QueryResultColumn,
+    QueryExecutionResult,
+)
+
+
+class SalesforceConnector:
+    """
+    Real Salesforce REST API connector using OAuth Client Credentials Flow.
+
+    Credentials are read only from backend environment variables:
+      SALESFORCE_CLIENT_ID
+      SALESFORCE_CLIENT_SECRET
+      SALESFORCE_LOGIN_URL
+    """
+
+    DEFAULT_LOGIN_URL = "https://login.salesforce.com"
+    OBJECTS = ("Account", "Contact", "Lead")
+
+    @classmethod
+    def _settings(cls) -> Tuple[str, str, str]:
+        login_url = (
+            os.environ.get("SALESFORCE_LOGIN_URL")
+            or cls.DEFAULT_LOGIN_URL
+        ).strip().rstrip("/")
+
+        client_id = (os.environ.get("SALESFORCE_CLIENT_ID") or "").strip()
+        client_secret = os.environ.get("SALESFORCE_CLIENT_SECRET") or ""
+
+        return login_url, client_id, client_secret
+
+    @staticmethod
+    def sanitize_error(error: Any) -> str:
+        """Remove credentials/tokens from errors before returning them."""
+        message = str(error or "").strip()
+
+        patterns = [
+            r"(client_secret|client_id|access_token|refresh_token|password|token)\s*[:=]\s*[^\s,;&]+",
+            r'"(client_secret|client_id|access_token|refresh_token|password|token)"\s*:\s*"[^"]*"',
+        ]
+
+        for pattern in patterns:
+            message = re.sub(
+                pattern,
+                lambda m: f"{m.group(1)}=***",
+                message,
+                flags=re.IGNORECASE,
+            )
+
+        return message.split("\n")[0][:500] or "Salesforce request failed."
+
+    @classmethod
+    def _get_access_token(
+        cls,
+        config: Optional[Dict[str, Any]] = None,
+        timeout_seconds: int = 15,
+    ) -> Tuple[str, str]:
+        # Prefer ephemeral credentials supplied for this connection test.
+        # Fall back to backend environment variables for normal saved-source use.
+        config = config or {}
+
+        login_url = (
+            config.get("salesforce_login_url")
+            or config.get("salesforceLoginUrl")
+        )
+        client_id = (
+            config.get("salesforce_client_id")
+            or config.get("salesforceClientId")
+        )
+        client_secret = (
+            config.get("salesforce_client_secret")
+            or config.get("salesforceClientSecret")
+        )
+
+        if not login_url or not client_id or not client_secret:
+            env_login_url, env_client_id, env_client_secret = cls._settings()
+            login_url = login_url or env_login_url
+            client_id = client_id or env_client_id
+            client_secret = client_secret or env_client_secret
+
+        login_url = str(login_url).strip().rstrip("/")
+        client_id = str(client_id or "").strip()
+        client_secret = str(client_secret or "")
+
+        missing = []
+        if not client_id:
+            missing.append("Salesforce Client ID")
+        if not client_secret:
+            missing.append("Salesforce Client Secret")
+
+        if missing:
+            raise RuntimeError(
+                f"Missing required Salesforce credential(s): {', '.join(missing)}"
+            )
+
+        response = requests.post(
+            f"{login_url}/services/oauth2/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=timeout_seconds,
+        )
+
+        if not response.ok:
+            raise RuntimeError(
+                f"Salesforce authentication failed: HTTP {response.status_code}"
+            )
+
+        payload = response.json()
+        access_token = payload.get("access_token")
+        instance_url = payload.get("instance_url")
+
+        if not access_token:
+            raise RuntimeError("Salesforce authentication response did not contain an access token.")
+
+        if not instance_url:
+            instance_url = login_url
+
+        return str(access_token), str(instance_url).rstrip("/")
+
+    @classmethod
+    def _get_api_version(
+        cls,
+        instance_url: str,
+        access_token: str,
+        timeout_seconds: int = 15,
+    ) -> str:
+        response = requests.get(
+            f"{instance_url}/services/data/",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            timeout=timeout_seconds,
+        )
+
+        if not response.ok:
+            raise RuntimeError(
+                f"Salesforce API discovery failed: HTTP {response.status_code}"
+            )
+
+        versions = response.json()
+
+        if not isinstance(versions, list) or not versions:
+            raise RuntimeError("Salesforce returned no available API versions.")
+
+        # Salesforce returns versions such as v62.0.
+        def version_key(item: Dict[str, Any]) -> float:
+            match = re.search(r"(\d+(?:\.\d+)?)", str(item.get("version", "")))
+            return float(match.group(1)) if match else -1.0
+
+        latest = max(versions, key=version_key)
+        version = latest.get("version")
+
+        if not version:
+            raise RuntimeError("Salesforce API version response was invalid.")
+
+        return f"v{version}"
+
+    @classmethod
+    def _request(
+        cls,
+        method: str,
+        url: str,
+        access_token: str,
+        timeout_seconds: int = 15,
+        **kwargs: Any,
+    ) -> requests.Response:
+        headers = kwargs.pop("headers", {})
+        headers.update(
+            {
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            }
+        )
+
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            timeout=timeout_seconds,
+            **kwargs,
+        )
+
+        return response
+
+    @classmethod
+    def test_connection(cls, config: Dict[str, Any]) -> ConnectionTestResult:
+        start = time.time()
+
+        try:
+            access_token, instance_url = cls._get_access_token(config)
+
+            version = cls._get_api_version(
+                instance_url=instance_url,
+                access_token=access_token,
+            )
+
+            latency_ms = max(1, int((time.time() - start) * 1000))
+
+            return ConnectionTestResult(
+                success=True,
+                message="Connection established successfully with Salesforce.",
+                latency_ms=latency_ms,
+                details={
+                    "salesforce_api_version": version,
+                    "instance_url": instance_url,
+                    "objects": list(cls.OBJECTS),
+                },
+            )
+
+        except Exception as exc:
+            latency_ms = max(1, int((time.time() - start) * 1000))
+
+            return ConnectionTestResult(
+                success=False,
+                message="Failed to connect to Salesforce.",
+                latency_ms=latency_ms,
+                error=cls.sanitize_error(exc),
+            )
+
+    @classmethod
+    def discover_metadata(cls, config: Dict[str, Any]) -> MetadataDiscoveryResult:
+        start = time.time()
+
+        try:
+            access_token, instance_url = cls._get_access_token()
+            version = cls._get_api_version(
+                instance_url=instance_url,
+                access_token=access_token,
+            )
+
+            tables: List[TableMetadata] = []
+            total_columns = 0
+            failures: List[str] = []
+
+            for object_name in cls.OBJECTS:
+                url = (
+                    f"{instance_url}/services/data/"
+                    f"{version}/sobjects/{quote(object_name, safe='')}/describe/"
+                )
+
+                response = cls._request(
+                    "GET",
+                    url,
+                    access_token,
+                )
+
+                if not response.ok:
+                    failures.append(
+                        f"{object_name}: HTTP {response.status_code}"
+                    )
+                    continue
+
+                payload = response.json()
+                fields = payload.get("fields", [])
+
+                columns: List[ColumnMetadata] = []
+
+                for index, field in enumerate(fields, start=1):
+                    field_name = field.get("name")
+
+                    if not field_name:
+                        continue
+
+                    field_type = field.get("type") or "VARCHAR"
+                    label = field.get("label")
+                    nillable = bool(field.get("nillable", True))
+                    is_primary_key = field_name == "Id"
+
+                    columns.append(
+                        ColumnMetadata(
+                            name=str(field_name),
+                            data_type=str(field_type).upper(),
+                            is_nullable=nillable,
+                            ordinal_position=index,
+                            comment=str(label) if label else None,
+                            is_primary_key=is_primary_key,
+                        )
+                    )
+
+                tables.append(
+                    TableMetadata(
+                        database="Salesforce",
+                        schema="default",
+                        name=object_name,
+                        table_type="OBJECT",
+                        row_count=0,
+                        bytes=0,
+                        comment=payload.get("label"),
+                        columns=columns,
+                    )
+                )
+
+                total_columns += len(columns)
+
+            latency_ms = max(1, int((time.time() - start) * 1000))
+
+            if not tables:
+                return MetadataDiscoveryResult(
+                    success=False,
+                    message="Failed to discover Salesforce metadata.",
+                    databases_discovered=0,
+                    schemas_discovered=0,
+                    tables_discovered=0,
+                    columns_discovered=0,
+                    tables=[],
+                    error="; ".join(failures) or "No Salesforce objects were discovered.",
+                    latency_ms=latency_ms,
+                )
+
+            if failures:
+                message = (
+                    "Salesforce metadata discovered with some object failures: "
+                    + "; ".join(failures)
+                )
+            else:
+                message = "Metadata synchronized successfully from Salesforce."
+
+            return MetadataDiscoveryResult(
+                success=True,
+                message=message,
+                databases_discovered=1,
+                schemas_discovered=1,
+                tables_discovered=len(tables),
+                columns_discovered=total_columns,
+                tables=tables,
+                error=None,
+                latency_ms=latency_ms,
+            )
+
+        except Exception as exc:
+            latency_ms = max(1, int((time.time() - start) * 1000))
+
+            return MetadataDiscoveryResult(
+                success=False,
+                message="Failed to discover metadata from Salesforce.",
+                databases_discovered=0,
+                schemas_discovered=0,
+                tables_discovered=0,
+                columns_discovered=0,
+                tables=[],
+                error=cls.sanitize_error(exc),
+                latency_ms=latency_ms,
+            )
+
+    @staticmethod
+    def _validate_soql(query: str) -> Optional[str]:
+        if not query or not query.strip():
+            return "SOQL query cannot be empty."
+
+        cleaned = re.sub(r"--[^\n]*", " ", query)
+        cleaned = re.sub(r"/\*.*?\*/", " ", cleaned, flags=re.DOTALL).strip()
+
+        if ";" in cleaned.rstrip(";"):
+            return "Multiple SOQL statements are not permitted."
+
+        first_token = cleaned.split(None, 1)[0].upper() if cleaned else ""
+
+        if first_token != "SELECT":
+            return "Only read-only SELECT SOQL queries are permitted."
+
+        prohibited = (
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "UPSERT",
+            "MERGE",
+            "DROP",
+            "ALTER",
+            "CREATE",
+            "TRUNCATE",
+            "GRANT",
+            "REVOKE",
+        )
+
+        no_strings = re.sub(r"'(?:''|[^'])*'", "''", cleaned)
+
+        for command in prohibited:
+            if re.search(rf"\b{command}\b", no_strings, re.IGNORECASE):
+                return f"Prohibited SOQL operation: {command}"
+
+        return None
+
+    @staticmethod
+    def _serialize_value(value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+
+        if isinstance(value, (list, dict)):
+            return value
+
+        return str(value)
+
+    @classmethod
+    def execute_read_query(
+        cls,
+        config: Dict[str, Any],
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout_seconds: int = 30,
+        limit: int = 100,
+    ) -> QueryExecutionResult:
+        start = time.time()
+
+        validation_error = cls._validate_soql(query)
+
+        if validation_error:
+            return QueryExecutionResult(
+                success=False,
+                message=validation_error,
+                error=validation_error,
+            )
+
+        bounded_limit = min(max(1, limit or 100), 1000)
+
+        try:
+            access_token, instance_url = cls._get_access_token(
+                timeout_seconds=min(timeout_seconds, 30)
+            )
+
+            version = cls._get_api_version(
+                instance_url=instance_url,
+                access_token=access_token,
+                timeout_seconds=min(timeout_seconds, 30),
+            )
+
+            soql = query.strip()
+
+            # The compiler should normally provide LIMIT. Add one only for
+            # unbounded queries so result size remains controlled.
+            if not re.search(r"\bLIMIT\s+\d+\b", soql, re.IGNORECASE):
+                soql = f"{soql} LIMIT {bounded_limit}"
+
+            url = (
+                f"{instance_url}/services/data/"
+                f"{version}/query/?q={quote(soql, safe='')}"
+            )
+
+            response = cls._request(
+                "GET",
+                url,
+                access_token,
+                timeout_seconds=min(timeout_seconds, 30),
+            )
+
+            if not response.ok:
+                try:
+                    payload = response.json()
+                    message = payload[0].get("message", "Salesforce query failed.")
+                    error_code = payload[0].get("errorCode")
+                    if error_code:
+                        message = f"{error_code}: {message}"
+                except Exception:
+                    message = f"Salesforce query failed: HTTP {response.status_code}"
+
+                raise RuntimeError(message)
+
+            payload = response.json()
+            raw_records = payload.get("records", [])
+
+            # Salesforce COUNT() is returned as totalSize with no records.
+            # Preserve that aggregate result as a single row.
+            if re.search(r"\bCOUNT\s*\(\s*\)", soql, re.IGNORECASE):
+                rows: List[Dict[str, Any]] = [{"expr0": payload.get("totalSize", 0)}]
+            else:
+                rows = []
+
+            for record in raw_records[:bounded_limit]:
+                if not isinstance(record, dict):
+                    continue
+
+                row = {
+                    key: cls._serialize_value(value)
+                    for key, value in record.items()
+                    if key != "attributes"
+                }
+
+                rows.append(row)
+
+            column_names: List[str] = []
+
+            for row in rows:
+                for key in row.keys():
+                    if key not in column_names:
+                        column_names.append(key)
+
+            columns = [
+                QueryResultColumn(
+                    name=name,
+                    data_type="VARCHAR",
+                )
+                for name in column_names
+            ]
+
+            execution_time_ms = max(
+                1,
+                int((time.time() - start) * 1000),
+            )
+
+            return QueryExecutionResult(
+                success=True,
+                columns=columns,
+                rows=rows,
+                row_count=len(rows),
+                execution_time_ms=execution_time_ms,
+                message=(
+                    f"Salesforce SOQL executed successfully "
+                    f"returning {len(rows)} row(s)."
+                ),
+            )
+
+        except Exception as exc:
+            execution_time_ms = max(
+                1,
+                int((time.time() - start) * 1000),
+            )
+
+            return QueryExecutionResult(
+                success=False,
+                columns=[],
+                rows=[],
+                row_count=0,
+                execution_time_ms=execution_time_ms,
+                message="Failed to execute SOQL query on Salesforce.",
+                error=cls.sanitize_error(exc),
+            )
+
+
+__all__ = ["SalesforceConnector"]
+

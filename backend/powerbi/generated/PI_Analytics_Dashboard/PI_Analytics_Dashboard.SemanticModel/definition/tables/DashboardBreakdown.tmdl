@@ -1,0 +1,16 @@
+﻿table DashboardBreakdown
+
+    column category
+        dataType: string
+        summarizeBy: none
+        sourceColumn: category
+
+    column metric_name
+        dataType: string
+        summarizeBy: none
+        sourceColumn: metric_name
+
+    column metric_value
+        dataType: double
+        summarizeBy: sum
+        sourceColumn: metric_value

@@ -1,0 +1,11 @@
+﻿{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/project/1.0.0/schema.json",
+  "version": "1.0",
+  "artifacts": [
+    {
+      "report": {
+        "path": "PI_Analytics_Dashboard.Report"
+      }
+    }
+  ]
+}

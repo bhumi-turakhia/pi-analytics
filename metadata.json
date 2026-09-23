@@ -1,0 +1,6 @@
+{
+  "name": "Pi Analytics",
+  "description": "Dataset-agnostic conversational AI analytics copilot and dynamic dashboard builder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
